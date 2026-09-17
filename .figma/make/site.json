@@ -1,0 +1,10 @@
+{
+  "description": "This web application streamlines document management and collaboration, enabling users to efficiently organize, share, and prototype ideas for hackathons.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
