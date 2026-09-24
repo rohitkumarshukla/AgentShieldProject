@@ -2,8 +2,17 @@
 // risk service rather than the domain type.
 export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 
+export type RiskFactorType =
+  | "DESTRUCTIVE_ACTION"
+  | "BULK_SCOPE"
+  | "EXTERNAL_DESTINATION"
+  | "SENSITIVE_DATA"
+  | "PRODUCTION_ENVIRONMENT"
+  | "FINANCIAL_IMPACT";
+
 export interface RiskFactor {
-  code: string;
+  factor: RiskFactorType;
+  points: number;
   reason: string;
 }
 
