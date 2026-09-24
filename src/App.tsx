@@ -141,9 +141,9 @@ export default function App() {
   return (
     <div className="flex h-screen overflow-hidden bg-[#070912]">
       {/* Sidebar */}
-      <aside className="w-[220px] shrink-0 flex flex-col bg-[#080c18] border-r border-[#1e293b] h-full overflow-hidden">
+      <aside className="w-55 shrink-0 flex flex-col bg-[#080c18] border-r border-border h-full overflow-hidden">
         {/* Logo */}
-        <div className="px-5 py-5 border-b border-[#1e293b]">
+        <div className="px-5 py-5 border-b border-border">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
               <ShieldIcon size={16} className="text-blue-400" />
@@ -156,7 +156,7 @@ export default function App() {
         </div>
 
         {/* System status */}
-        <div className="px-5 py-3 border-b border-[#1e293b]">
+        <div className="px-5 py-3 border-b border-border">
           <div className="flex items-center gap-2">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 status-pulse inline-block"/>
             <span className="text-xs text-slate-500">All systems operational</span>
@@ -175,7 +175,7 @@ export default function App() {
                 className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
                   active
                     ? "bg-blue-600/20 text-blue-300 border border-blue-500/20"
-                    : "text-slate-500 hover:text-slate-300 hover:bg-[#1a2235] border border-transparent"
+                    : "text-slate-500 hover:text-slate-300 hover:bg-secondary border border-transparent"
                 }`}
               >
                 <span className={active ? "text-blue-400" : "text-slate-600"}>{item.icon}</span>
@@ -190,13 +190,13 @@ export default function App() {
           })}
 
           {/* Demo mode separator */}
-          <div className="pt-3 border-t border-[#1e293b] mt-3">
+          <div className="pt-3 border-t border-border mt-3">
             <button
               onClick={() => setPage("demo")}
               className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-lg text-sm transition-all ${
                 page === "demo"
                   ? "bg-indigo-600/20 text-indigo-300 border border-indigo-500/20"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-[#1a2235] border border-transparent"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-secondary border border-transparent"
               }`}
             >
               <span className={page === "demo" ? "text-indigo-400" : "text-slate-500"}>
@@ -209,7 +209,7 @@ export default function App() {
         </nav>
 
         {/* Footer */}
-        <div className="px-5 py-4 border-t border-[#1e293b] space-y-2">
+        <div className="px-5 py-4 border-t border-border space-y-2">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-full bg-slate-700 border border-slate-600 flex items-center justify-center text-xs text-slate-300 font-semibold">A</div>
             <div>
@@ -226,7 +226,7 @@ export default function App() {
 
       {/* Top bar */}
       <div className="flex-1 flex flex-col min-h-0">
-        <header className="h-12 shrink-0 border-b border-[#1e293b] bg-[#080c18] flex items-center justify-between px-6">
+        <header className="h-12 shrink-0 border-b border-border bg-[#080c18] flex items-center justify-between px-6">
           <div className="flex items-center gap-3">
             <span className="text-xs text-slate-500 font-mono">ACME Corp</span>
             <span className="text-slate-600">/</span>
@@ -254,7 +254,7 @@ export default function App() {
       <AuditDrawer event={auditEvent} onClose={() => setAuditEvent(null)} />
 
       {/* Toasts */}
-      <div className="fixed bottom-6 right-6 z-[100] space-y-2">
+      <div className="fixed bottom-6 right-6 z-100 space-y-2">
         {toasts.map((t) => (
           <Toast key={t.id} message={t.message} type={t.type} onDismiss={() => dismissToast(t.id)} />
         ))}
