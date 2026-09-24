@@ -9,3 +9,6 @@ data (+20), production (+15), and financial impact of 1,000–9,999 (+25) or
 Scores are clamped to 100 and map to `LOW` (0–19), `MEDIUM` (20–49), `HIGH`
 (50–79), and `CRITICAL` (80–100). The module intentionally has no HTTP,
 database, policy, or external-service dependency.
+
+Domain types remain in `src/types` so services, routes, and persistence can be
+introduced without coupling core AgentShield concepts to a framework.
