@@ -10,8 +10,8 @@ app.use(express.json());
 
 // Health checks provide a lightweight target for local development, deployment,
 // and service monitoring before the broader AgentShield API is introduced.
-app.get("/api/health", (_request, response) => {
-  response.json({
+app.get("/api/health", (req, res) => {
+  res.json({
     status: "ok",
     service: "agentshield-backend",
   });
