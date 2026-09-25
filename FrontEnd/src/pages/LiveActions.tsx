@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { RiskMeter, Mono, DecisionBadge } from "../components/shared";
+import { RiskMeter, Mono, DecisionBadge } from "../../components/shared";
 import type { AuditEvent } from "../data/mockData";
 import { auditEvents } from "../data/mockData";
 

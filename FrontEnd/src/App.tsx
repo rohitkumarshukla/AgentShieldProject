@@ -10,9 +10,9 @@ import Recovery from "./pages/Recovery";
 import Demo from "./pages/Demo";
 import DecisionGraph from "./pages/DecisionGraph";
 import ThreatProtection from "./pages/ThreatProtection";
-import AuditDrawer from "./components/AuditDrawer";
-import Toast from "./components/Toast";
-import { ShieldIcon } from "./components/shared";
+import AuditDrawer from "../components/AuditDrawer";
+import Toast from "../components/Toast";
+import { ShieldIcon } from "../components/shared";
 import type { AuditEvent } from "./data/mockData";
 
 type Page = "overview" | "liveactions" | "approvals" | "riskengine" | "policies" | "agents" | "auditlog" | "recovery" | "demo" | "decisiongraph" | "threats";

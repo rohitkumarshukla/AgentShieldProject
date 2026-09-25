@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { agents } from "../data/mockData";
-import { Mono } from "../components/shared";
+import { Mono } from "../../components/shared";
 import type { Risk } from "../data/mockData";
 
 const riskColors: Record<Risk, string> = {

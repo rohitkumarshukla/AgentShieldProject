@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { auditEvents } from "../data/mockData";
-import { DecisionBadge, RiskBadge, Mono } from "../components/shared";
+import { DecisionBadge, RiskBadge, Mono } from "../../components/shared";
 import type { AuditEvent } from "../data/mockData";
 
 interface Props {

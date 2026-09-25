@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { RiskMeter, Mono } from "../components/shared";
+import { RiskMeter, Mono } from "../../components/shared";
 
 type ApprovalState = "pending" | "approving" | "approved" | "denied";
 

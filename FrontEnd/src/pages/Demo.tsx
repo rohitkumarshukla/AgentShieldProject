@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RiskMeter, Mono } from "../components/shared";
+import { RiskMeter, Mono } from "../../components/shared";
 
 type ScenarioKey = "block" | "approve" | "allow";
 type Stage = "idle" | "intercepted" | "risk" | "policy" | "decision";

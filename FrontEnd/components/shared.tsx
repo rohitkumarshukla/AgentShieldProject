@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import type { Decision, Risk } from "../data/mockData";
+import type { Decision, Risk } from "../src/data/mockData";
 
 // ── Decision badge ──────────────────────────────────────────────────────────
 export function DecisionBadge({ decision }: { decision: Decision }) {

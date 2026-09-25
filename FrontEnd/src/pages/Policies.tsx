@@ -1,5 +1,5 @@
 import { policies } from "../data/mockData";
-import { PolicyActionBadge, Mono } from "../components/shared";
+import { PolicyActionBadge, Mono } from "../../components/shared";
 
 export default function Policies() {
   const actionOrder = { "BLOCK": 0, "REQUIRE APPROVAL": 1, "AUTO ALLOW": 2 };

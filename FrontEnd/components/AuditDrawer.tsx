@@ -1,4 +1,4 @@
-import type { AuditEvent } from "../data/mockData";
+import type { AuditEvent } from "../src/data/mockData";
 import { DecisionBadge, RiskMeter } from "./shared";
 
 interface AuditDrawerProps {
