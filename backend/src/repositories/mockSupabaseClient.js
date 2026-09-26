@@ -13,6 +13,8 @@ export function createMockSupabaseClient({ data = null, error = null } = {}) {
     inserts: [],
     selects: [],
     eqFilters: [],
+    ranges: [],
+    orderCalls: [],
     singleCalls: 0,
   };
 
@@ -32,6 +34,14 @@ export function createMockSupabaseClient({ data = null, error = null } = {}) {
         },
         eq(column, value) {
           calls.eqFilters.push({ column, value });
+          return queryBuilder;
+        },
+        range(from, to) {
+          calls.ranges.push({ from, to });
+          return queryBuilder;
+        },
+        order(column, options) {
+          calls.orderCalls.push({ column, options });
           return queryBuilder;
         },
         single() {

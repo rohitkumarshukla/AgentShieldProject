@@ -148,41 +148,83 @@ export function createAuditEventRepository(supabaseClient) {
     },
 
     /**
-     * Retrieves all audit events associated with an action ID.
+     * Retrieves all audit events associated with an action ID with optional pagination.
      *
      * @param {string} actionId - Action UUID
-     * @returns {Promise<Array<Object>>} Array of records, or empty array if none found
+     * @param {Object} [options={}]
+     * @param {number} [options.page]
+     * @param {number} [options.limit]
+     * @returns {Promise<Array<Object> | { items: Array<Object>, hasMore: boolean }>}
      */
-    async listAuditEventsByActionId(actionId) {
+    async listAuditEventsByActionId(actionId, options = {}) {
       if (!actionId || typeof actionId !== "string") {
         throw new Error("Failed to list audit events by action: valid actionId is required");
       }
 
-      const response = await supabaseClient
+      const page = options.page;
+      const limit = options.limit;
+
+      let query = supabaseClient
         .from("audit_events")
         .select()
         .eq("action_id", actionId);
 
+      if (page !== undefined && limit !== undefined) {
+        const offset = (page - 1) * limit;
+        query = query.range(offset, offset + limit);
+
+        const response = await query;
+        const data = handleDbResponse(response, "Failed to list audit events by action");
+        const rows = Array.isArray(data) ? data : [];
+
+        const hasMore = rows.length > limit;
+        const items = hasMore ? rows.slice(0, limit) : rows;
+
+        return { items, hasMore };
+      }
+
+      const response = await query;
       const data = handleDbResponse(response, "Failed to list audit events by action");
       return Array.isArray(data) ? data : [];
     },
 
     /**
-     * Retrieves all audit events associated with an agent ID.
+     * Retrieves all audit events associated with an agent ID with optional pagination.
      *
      * @param {string} agentId - Agent UUID
-     * @returns {Promise<Array<Object>>} Array of records, or empty array if none found
+     * @param {Object} [options={}]
+     * @param {number} [options.page]
+     * @param {number} [options.limit]
+     * @returns {Promise<Array<Object> | { items: Array<Object>, hasMore: boolean }>}
      */
-    async listAuditEventsByAgentId(agentId) {
+    async listAuditEventsByAgentId(agentId, options = {}) {
       if (!agentId || typeof agentId !== "string") {
         throw new Error("Failed to list audit events by agent: valid agentId is required");
       }
 
-      const response = await supabaseClient
+      const page = options.page;
+      const limit = options.limit;
+
+      let query = supabaseClient
         .from("audit_events")
         .select()
         .eq("agent_id", agentId);
 
+      if (page !== undefined && limit !== undefined) {
+        const offset = (page - 1) * limit;
+        query = query.range(offset, offset + limit);
+
+        const response = await query;
+        const data = handleDbResponse(response, "Failed to list audit events by agent");
+        const rows = Array.isArray(data) ? data : [];
+
+        const hasMore = rows.length > limit;
+        const items = hasMore ? rows.slice(0, limit) : rows;
+
+        return { items, hasMore };
+      }
+
+      const response = await query;
       const data = handleDbResponse(response, "Failed to list audit events by agent");
       return Array.isArray(data) ? data : [];
     },

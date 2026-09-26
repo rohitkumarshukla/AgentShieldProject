@@ -84,15 +84,34 @@ export function createAgentRepository(supabaseClient) {
     },
 
     /**
-     * Retrieves all agent records.
+     * Retrieves agent records with optional pagination.
      *
-     * @returns {Promise<Array<Object>>} Array of records, or empty array if none found
+     * @param {Object} [options={}]
+     * @param {number} [options.page]
+     * @param {number} [options.limit]
+     * @returns {Promise<Array<Object> | { items: Array<Object>, hasMore: boolean }>}
      */
-    async listAgents() {
-      const response = await supabaseClient
-        .from("agents")
-        .select();
+    async listAgents(options = {}) {
+      const page = options.page;
+      const limit = options.limit;
 
+      let query = supabaseClient.from("agents").select();
+
+      if (page !== undefined && limit !== undefined) {
+        const offset = (page - 1) * limit;
+        query = query.range(offset, offset + limit);
+
+        const response = await query;
+        const data = handleDbResponse(response, "Failed to list agents");
+        const rows = Array.isArray(data) ? data : [];
+
+        const hasMore = rows.length > limit;
+        const items = hasMore ? rows.slice(0, limit) : rows;
+
+        return { items, hasMore };
+      }
+
+      const response = await query;
       const data = handleDbResponse(response, "Failed to list agents");
       return Array.isArray(data) ? data : [];
     },
