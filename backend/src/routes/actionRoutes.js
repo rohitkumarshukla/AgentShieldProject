@@ -2,8 +2,8 @@ import express from "express";
 import { createActionRepository } from "../repositories/actionRepository.js";
 import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
 import { isValidUuid } from "../domain/agentValidator.js";
-
 import { validatePaginationMiddleware } from "../middleware/pagination.js";
+import { createActionService, ActionServiceError } from "../services/action.service.js";
 
 /**
  * Creates an action router with configurable dependencies.
@@ -11,24 +11,29 @@ import { validatePaginationMiddleware } from "../middleware/pagination.js";
  * Supports dependency injection for testing:
  * - supabaseClient: explicit Supabase client instance (or null)
  * - actionRepository: explicit ActionRepository instance (optional override)
+ * - actionService: explicit ActionService instance (optional override)
  *
  * @param {Object} [options={}]
  * @param {Object|null} [options.supabaseClient]
  * @param {Object} [options.actionRepository]
+ * @param {Object} [options.actionService]
  * @returns {express.Router}
  */
 export function createActionRoutes(options = {}) {
   const supabaseClient = options.supabaseClient !== undefined ? options.supabaseClient : defaultSupabaseClient;
   const actionRepository = options.actionRepository || (supabaseClient ? createActionRepository(supabaseClient) : null);
+  const actionService =
+    options.actionService ||
+    (actionRepository ? createActionService({ actionRepository }) : null);
 
   const router = express.Router();
 
   /**
-   * Helper to verify database/repository availability.
-   * If Supabase is unconfigured or no repository is available, returns HTTP 503.
+   * Helper to verify database/service availability.
+   * If Supabase is unconfigured or no service is available, returns HTTP 503.
    */
-  function requireRepository(req, res, next) {
-    if (!actionRepository) {
+  function requireService(req, res, next) {
+    if (!actionService) {
       return res.status(503).json({
         success: false,
         error: {
@@ -43,7 +48,7 @@ export function createActionRoutes(options = {}) {
   // ---------------------------------------------------------------------------
   // GET /api/v1/actions/:id — Retrieve an action by ID
   // ---------------------------------------------------------------------------
-  router.get("/actions/:id", requireRepository, async (req, res) => {
+  router.get("/actions/:id", requireService, async (req, res) => {
     const { id } = req.params;
 
     if (!isValidUuid(id)) {
@@ -57,17 +62,7 @@ export function createActionRoutes(options = {}) {
     }
 
     try {
-      const action = await actionRepository.getActionById(id);
-
-      if (!action) {
-        return res.status(404).json({
-          success: false,
-          error: {
-            code: "ACTION_NOT_FOUND",
-            message: `Action with ID "${id}" was not found`,
-          },
-        });
-      }
+      const action = await actionService.getActionById(id);
 
       return res.status(200).json({
         success: true,
@@ -76,11 +71,13 @@ export function createActionRoutes(options = {}) {
         },
       });
     } catch (err) {
-      return res.status(500).json({
+      const statusCode = err instanceof ActionServiceError ? err.statusCode : 500;
+      const message = statusCode === 500 ? "Failed to retrieve action record" : err.message;
+      return res.status(statusCode).json({
         success: false,
         error: {
-          code: "ACTION_RETRIEVAL_FAILED",
-          message: "Failed to retrieve action record",
+          code: err.code || "ACTION_RETRIEVAL_FAILED",
+          message,
         },
       });
     }
@@ -89,7 +86,7 @@ export function createActionRoutes(options = {}) {
   // ---------------------------------------------------------------------------
   // GET /api/v1/agents/:agentId/actions — Retrieve all actions for an agent (paginated)
   // ---------------------------------------------------------------------------
-  router.get("/agents/:agentId/actions", requireRepository, validatePaginationMiddleware, async (req, res) => {
+  router.get("/agents/:agentId/actions", requireService, validatePaginationMiddleware, async (req, res) => {
     const { agentId } = req.params;
     const { page, limit } = req.pagination;
 
@@ -104,28 +101,23 @@ export function createActionRoutes(options = {}) {
     }
 
     try {
-      const result = await actionRepository.listActionsByAgentId(agentId, { page, limit });
-
-      const actions = Array.isArray(result) ? result : (result.items || []);
-      const hasMore = Array.isArray(result) ? false : Boolean(result.hasMore);
+      const result = await actionService.listActionsByAgent(agentId, { page, limit });
 
       return res.status(200).json({
         success: true,
         data: {
-          actions,
-          pagination: {
-            page,
-            limit,
-            hasMore,
-          },
+          actions: result.actions,
+          pagination: result.pagination,
         },
       });
     } catch (err) {
-      return res.status(500).json({
+      const statusCode = err instanceof ActionServiceError ? err.statusCode : 500;
+      const message = statusCode === 500 ? "Failed to list actions for agent" : err.message;
+      return res.status(statusCode).json({
         success: false,
         error: {
-          code: "ACTION_LIST_FAILED",
-          message: "Failed to list actions for agent",
+          code: err.code || "ACTION_LIST_FAILED",
+          message,
         },
       });
     }

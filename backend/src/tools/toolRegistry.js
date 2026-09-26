@@ -50,14 +50,31 @@ export class ToolRegistry {
   }
 
   /**
-   * Retrieves a tool by ID.
+   * Helper to normalize identifier by lowercasing and removing underscores/hyphens.
+   */
+  _normalizeId(str) {
+    if (!str || typeof str !== "string") return "";
+    return str.toLowerCase().replace(/[-_]/g, "");
+  }
+
+  /**
+   * Retrieves a tool by ID (matches exact, lowercase, snake_case, camelCase).
    *
    * @param {string} toolId
    * @returns {Object | null}
    */
   getTool(toolId) {
     if (!toolId || typeof toolId !== "string") return null;
-    return this.tools.get(toolId.trim().toLowerCase()) || null;
+    const direct = this.tools.get(toolId.trim().toLowerCase());
+    if (direct) return direct;
+
+    const norm = this._normalizeId(toolId);
+    for (const [id, tool] of this.tools.entries()) {
+      if (this._normalizeId(id) === norm) {
+        return tool;
+      }
+    }
+    return null;
   }
 
   /**
@@ -72,8 +89,10 @@ export class ToolRegistry {
     if (!tool) return null;
 
     const opName = String(operationName).trim().toLowerCase();
+    const normOpName = this._normalizeId(operationName);
+
     const operation = tool.operations.find(
-      (op) => op.name.toLowerCase() === opName
+      (op) => op.name.toLowerCase() === opName || this._normalizeId(op.name) === normOpName
     );
 
     if (!operation) return null;

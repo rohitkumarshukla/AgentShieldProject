@@ -1,6 +1,6 @@
 import { defaultToolRegistry } from "./toolRegistry.js";
 import { DecisionEngine } from "../decision/decisionEngine.js";
-import { SecurityInterceptor } from "../security/interceptor.js";
+import { createActionService } from "../services/action.service.js";
 
 const defaultDecisionEngine = new DecisionEngine();
 
@@ -20,6 +20,7 @@ export class GovernedToolExecutor {
     decisionRepository = null,
     auditEventRepository = null,
     approvalRepository = null,
+    actionService = null,
   } = {}) {
     this.toolRegistry = toolRegistry;
     this.decisionEngine = decisionEngine;
@@ -29,13 +30,16 @@ export class GovernedToolExecutor {
     this.auditEventRepository = auditEventRepository;
     this.approvalRepository = approvalRepository;
 
-    this.interceptor = new SecurityInterceptor({
-      agentRepository,
-      actionRepository,
-      decisionRepository,
-      auditEventRepository,
-      approvalRepository,
-    });
+    this.actionService =
+      actionService ||
+      createActionService({
+        actionRepository,
+        agentRepository,
+        decisionRepository,
+        auditEventRepository,
+        approvalRepository,
+        toolRegistry,
+      });
   }
 
   /**
@@ -71,132 +75,22 @@ export class GovernedToolExecutor {
       throw new Error("agentId, toolId, and operation are required to invoke a tool");
     }
 
-    // Step 1: Tool Registry Lookup
+    // 1. Tool Registry Lookup
     const opInfo = this.toolRegistry.getOperation(toolId, operation);
     if (!opInfo) {
       throw new Error(`Tool or operation '${toolId}.${operation}' not found in registry`);
     }
 
-    const { tool, operation: opDef } = opInfo;
-
-    // Step 2, 3, 4, 5: Security Pipeline (Authorization -> Risk -> Policy)
-    const interceptResult = await this.interceptor.interceptToolAction({
+    // 2. Execute through ActionService pipeline
+    return this.actionService.createAndExecuteAction({
       agentId,
       toolId,
       operation,
       parameters,
       environment,
+      dryRun,
       toolDef: opInfo,
     });
-
-    const { action, risk, policy, audit } = interceptResult;
-
-    // Step 6: Outcome Handling
-
-    // A. Unauthorized or Blocked
-    if (!interceptResult.authorized || interceptResult.decision === "BLOCK") {
-      return {
-        status: "BLOCKED",
-        executed: false,
-        decision: "BLOCK",
-        action,
-        risk,
-        policy,
-        audit,
-        reason: policy?.reason || interceptResult.reason,
-        policyCode: policy?.policyCode || interceptResult.policyCode,
-        message: `Action BLOCKED: ${policy?.reason || interceptResult.reason}`,
-        pipeline: interceptResult.pipeline,
-        suppressedImpact: {
-          preventedOperation: `${toolId}.${operation}`,
-          scopeCount: action?.scope?.count || 1,
-        },
-      };
-    }
-
-    // B. Approval Required
-    if (interceptResult.decision === "APPROVAL_REQUIRED" || policy?.requiresHumanApproval) {
-      let approvalRecord = null;
-      if (this.approvalRepository && action) {
-        try {
-          approvalRecord = await this.approvalRepository.createApproval({
-            actionId: action.id,
-            status: "pending",
-            reason: policy.reason,
-            metadata: {
-              toolId,
-              operation,
-              parameters,
-              riskScore: risk?.score,
-              policyCode: policy?.policyCode,
-            },
-          });
-        } catch {}
-      }
-
-      return {
-        status: "APPROVAL_REQUIRED",
-        executed: false,
-        decision: "APPROVAL_REQUIRED",
-        action,
-        risk,
-        policy,
-        audit,
-        approval: approvalRecord,
-        message: `Action requires human authorization before execution: ${policy.reason}`,
-      };
-    }
-
-    // C. Dry-Run Simulated Allow
-    if (dryRun) {
-      return {
-        status: "SIMULATED_ALLOW",
-        executed: false,
-        dryRun: true,
-        decision: "ALLOW",
-        action,
-        risk,
-        policy,
-        message: "Governance policy allows action. (Dry-run mode: tool execution omitted)",
-      };
-    }
-
-    // D. Real Tool Execution
-    let toolResult;
-    try {
-      toolResult = await this.toolRegistry.executeOperation(toolId, operation, parameters);
-    } catch (execErr) {
-      toolResult = {
-        success: false,
-        error: execErr.message,
-        executionTimeMs: 0,
-      };
-    }
-
-    if (this.auditEventRepository && audit) {
-      try {
-        await this.auditEventRepository.createAuditEvent({
-          ...audit,
-          status: toolResult.success ? "EXECUTED" : "FAILED",
-          metadata: {
-            ...audit.metadata,
-            executionResult: toolResult,
-          },
-        });
-      } catch {}
-    }
-
-    return {
-      status: "EXECUTED",
-      executed: true,
-      decision: "ALLOW",
-      action,
-      risk,
-      policy,
-      audit,
-      execution: toolResult,
-      result: toolResult,
-    };
   }
 }
 
