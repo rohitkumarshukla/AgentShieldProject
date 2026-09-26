@@ -102,7 +102,7 @@ describe("Tool Routes API", () => {
     });
   });
 
-  it("POST /api/v1/tools/:id/test: dry-runs a tool directly", async () => {
+  it("POST /api/v1/tools/:id/test: dry-runs a tool through governance pipeline", async () => {
     await withToolServer({}, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/api/v1/tools/customer_crm/test`, {
         method: "POST",
@@ -116,7 +116,8 @@ describe("Tool Routes API", () => {
       assert.equal(res.status, 200);
       const body = await res.json();
       assert.equal(body.success, true);
-      assert.equal(body.data.result.customer.id, "cust_99");
+      assert.equal(body.data.dryRun, true);
+      assert.equal(body.data.decision, "ALLOW");
     });
   });
 });

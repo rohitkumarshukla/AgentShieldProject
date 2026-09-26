@@ -5,6 +5,7 @@ import { createAgentRepository } from "../repositories/agentRepository.js";
 import { createActionRepository } from "../repositories/actionRepository.js";
 import { createDecisionRepository } from "../repositories/decisionRepository.js";
 import { createAuditEventRepository } from "../repositories/auditEventRepository.js";
+import { createApprovalRepository } from "../repositories/approvalRepository.js";
 import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
 import { isValidUuid } from "../domain/agentValidator.js";
 
@@ -29,6 +30,7 @@ export function createToolRoutes(options = {}) {
   const actionRepository = options.actionRepository || (supabaseClient ? createActionRepository(supabaseClient) : null);
   const decisionRepository = options.decisionRepository || (supabaseClient ? createDecisionRepository(supabaseClient) : null);
   const auditEventRepository = options.auditEventRepository || (supabaseClient ? createAuditEventRepository(supabaseClient) : null);
+  const approvalRepository = options.approvalRepository || (supabaseClient ? createApprovalRepository(supabaseClient) : null);
 
   const governedExecutor =
     options.governedExecutor ||
@@ -38,6 +40,7 @@ export function createToolRoutes(options = {}) {
       actionRepository,
       decisionRepository,
       auditEventRepository,
+      approvalRepository,
     });
 
   const router = express.Router();
@@ -145,7 +148,7 @@ export function createToolRoutes(options = {}) {
           success: false,
           error: {
             code: "INVALID_OPERATION",
-            message: "operation is required (e.g. 'delete_customers')",
+            message: "operation is required (e.g. 'deleteCustomers')",
           },
         });
       }
@@ -156,6 +159,7 @@ export function createToolRoutes(options = {}) {
         operation,
         parameters,
         environment,
+        dryRun: false,
       });
 
       return res.status(200).json({
@@ -179,12 +183,13 @@ export function createToolRoutes(options = {}) {
   });
 
   // ---------------------------------------------------------------------------
-  // 4. POST /api/v1/tools/:id/test — Direct dry-run / simulation test
+  // 4. POST /api/v1/tools/:id/test — Dry-run simulation through governance pipeline
+  // (NO un-governed bypasses: strictly passes through Permission -> Risk -> Policy)
   // ---------------------------------------------------------------------------
   router.post("/tools/:id/test", async (req, res) => {
     try {
       const { id } = req.params;
-      const { operation, parameters = {} } = req.body || {};
+      const { operation, parameters = {}, agentId, environment } = req.body || {};
 
       if (!operation || typeof operation !== "string") {
         return res.status(400).json({
@@ -196,11 +201,20 @@ export function createToolRoutes(options = {}) {
         });
       }
 
-      const result = await toolRegistry.executeOperation(id, operation, parameters);
+      const mockAgentId = agentId && isValidUuid(agentId) ? agentId : "00000000-0000-0000-0000-000000000000";
+
+      const outcome = await governedExecutor.invokeGovernedTool({
+        agentId: mockAgentId,
+        toolId: id,
+        operation,
+        parameters,
+        environment: environment || "development",
+        dryRun: true,
+      });
 
       return res.status(200).json({
         success: true,
-        data: result,
+        data: outcome,
       });
     } catch (err) {
       return res.status(400).json({

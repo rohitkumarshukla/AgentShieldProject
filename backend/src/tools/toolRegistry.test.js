@@ -148,6 +148,6 @@ describe("GovernedToolExecutor", () => {
 
     assert.equal(result.status, "BLOCKED");
     assert.equal(result.decision, "BLOCK");
-    assert.match(result.reason, /not authorized to access tool/);
+    assert.match(result.reason, /not authorized to (access|invoke) tool/i);
   });
 });
