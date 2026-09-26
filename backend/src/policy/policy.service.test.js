@@ -104,6 +104,50 @@ describe("Policy Service", () => {
       assert.equal(result.policyName, "Staging Financial Block");
     });
 
+    it("evaluates agent_threshold_guard when risk score exceeds agent's approval threshold", () => {
+      const action = {
+        actionType: "update",
+        metadata: {
+          permissions: {
+            requiresApprovalThreshold: 50,
+          },
+        },
+      };
+      const risk = { score: 55, level: "MEDIUM", factors: [] };
+
+      const result = policyService.evaluatePolicy(action, risk);
+      assert.equal(result.decision, "APPROVAL_REQUIRED");
+      assert.equal(result.policyCode, "agent_threshold_guard");
+      assert.equal(result.requiresHumanApproval, true);
+    });
+
+    it("evaluates financial_guardrail for high-value transactions (>= $1000)", () => {
+      const action = {
+        actionType: "execute",
+        financialImpact: 5000,
+      };
+      const risk = { score: 30, level: "MEDIUM", factors: [] };
+
+      const result = policyService.evaluatePolicy(action, risk);
+      assert.equal(result.decision, "APPROVAL_REQUIRED");
+      assert.equal(result.policyCode, "financial_guardrail");
+      assert.equal(result.requiresHumanApproval, true);
+    });
+
+    it("evaluates production_infra_guard for high risk production infrastructure modifications", () => {
+      const action = {
+        actionType: "execute",
+        environment: "production",
+        metadata: { toolId: "infrastructure_ops" },
+      };
+      const risk = { score: 75, level: "HIGH", factors: [] };
+
+      const result = policyService.evaluatePolicy(action, risk);
+      assert.equal(result.decision, "APPROVAL_REQUIRED");
+      assert.equal(result.policyCode, "production_infra_guard");
+      assert.equal(result.requiresHumanApproval, true);
+    });
+
     it("throws PolicyServiceError on missing or invalid input", () => {
       assert.throws(
         () => policyService.evaluatePolicy(null, { level: "LOW" }),
@@ -114,6 +158,64 @@ describe("Policy Service", () => {
         () => policyService.evaluatePolicy({}, null),
         (err) => err instanceof PolicyServiceError && err.statusCode === 400
       );
+    });
+  });
+
+  describe("evaluatePolicyAsync & evaluateActionAsync", () => {
+    it("asynchronously evaluates policy with async custom rules", async () => {
+      const asyncCustomPolicies = [
+        {
+          code: "async_security_rule",
+          name: "Async Security Rule",
+          decision: "APPROVAL_REQUIRED",
+          reason: "Async database check required approval",
+          match: async (act) => act.target === "confidential_db",
+        },
+      ];
+
+      const action = {
+        actionType: "read",
+        target: "confidential_db",
+      };
+      const risk = { score: 10, level: "LOW", factors: [] };
+
+      const result = await policyService.evaluatePolicyAsync(action, risk, asyncCustomPolicies);
+      assert.equal(result.decision, "APPROVAL_REQUIRED");
+      assert.equal(result.policyCode, "async_security_rule");
+    });
+
+    it("fails closed (BLOCK) if custom policy matcher throws an error", async () => {
+      const failingCustomPolicies = [
+        {
+          code: "buggy_rule",
+          match: () => {
+            throw new Error("Syntax error in custom script");
+          },
+        },
+      ];
+
+      const action = { actionType: "read" };
+      const risk = { score: 10, level: "LOW", factors: [] };
+
+      const result = await policyService.evaluatePolicyAsync(action, risk, failingCustomPolicies);
+      assert.equal(result.decision, "BLOCK");
+      assert.equal(result.policyCode, "custom_policy_evaluation_error");
+    });
+
+    it("asynchronously evaluates complete action pipeline via evaluateActionAsync", async () => {
+      const action = {
+        actionType: "delete",
+        scope: { count: 150 },
+        destination: { type: "internal" },
+      };
+
+      const result = await policyService.evaluateActionAsync(action);
+      assert.ok(result.action);
+      assert.ok(result.risk);
+      assert.ok(result.policy);
+      assert.equal(result.risk.score, 100);
+      assert.equal(result.policy.decision, "BLOCK");
+      assert.equal(result.policy.policyCode, "bulk_delete_guard");
     });
   });
 });
