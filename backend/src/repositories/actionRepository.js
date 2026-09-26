@@ -109,21 +109,42 @@ export function createActionRepository(supabaseClient) {
     },
 
     /**
-     * Retrieves all action records associated with a specific agent ID.
+     * Retrieves all action records associated with a specific agent ID with optional pagination.
      *
      * @param {string} agentId - Agent UUID
-     * @returns {Promise<Array<Object>>} Array of records, or empty array if none found
+     * @param {Object} [options={}]
+     * @param {number} [options.page]
+     * @param {number} [options.limit]
+     * @returns {Promise<Array<Object> | { items: Array<Object>, hasMore: boolean }>}
      */
-    async listActionsByAgentId(agentId) {
+    async listActionsByAgentId(agentId, options = {}) {
       if (!agentId || typeof agentId !== "string") {
         throw new Error("Failed to list actions by agent: valid agentId is required");
       }
 
-      const response = await supabaseClient
+      const page = options.page;
+      const limit = options.limit;
+
+      let query = supabaseClient
         .from("actions")
         .select()
         .eq("agent_id", agentId);
 
+      if (page !== undefined && limit !== undefined) {
+        const offset = (page - 1) * limit;
+        query = query.range(offset, offset + limit);
+
+        const response = await query;
+        const data = handleDbResponse(response, "Failed to list actions by agent");
+        const rows = Array.isArray(data) ? data : [];
+
+        const hasMore = rows.length > limit;
+        const items = hasMore ? rows.slice(0, limit) : rows;
+
+        return { items, hasMore };
+      }
+
+      const response = await query;
       const data = handleDbResponse(response, "Failed to list actions by agent");
       return Array.isArray(data) ? data : [];
     },

@@ -1,3 +1,26 @@
+import fs from "node:fs";
+import path from "node:path";
+
+// In Node 20.12+ / 21+, process.loadEnvFile natively loads .env into process.env if present.
+// We load it safely so local development and manual testing pick up backend/.env without external packages.
+try {
+  if (typeof process.loadEnvFile === "function") {
+    // Check if .env exists in current working directory or backend directory
+    const candidates = [
+      path.resolve(process.cwd(), ".env"),
+      path.resolve(process.cwd(), "backend", ".env"),
+    ];
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        process.loadEnvFile(candidate);
+        break;
+      }
+    }
+  }
+} catch {
+  // Ignore errors reading .env in test or containerized environments
+}
+
 const VALID_NODE_ENVS = new Set(["development", "test", "production"]);
 
 /**

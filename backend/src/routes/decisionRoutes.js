@@ -9,7 +9,9 @@ import { validateAction } from "../domain/actionValidator.js";
 import { createActionRepository } from "../repositories/actionRepository.js";
 import { createDecisionRepository } from "../repositories/decisionRepository.js";
 import { createAuditEventRepository } from "../repositories/auditEventRepository.js";
+import { createAgentRepository } from "../repositories/agentRepository.js";
 import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
+import { isValidUuid } from "../domain/agentValidator.js";
 
 /**
  * Creates a decision router with configurable dependencies.
@@ -20,6 +22,7 @@ import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
  * - actionRepository: explicit ActionRepository instance (optional override)
  * - decisionRepository: explicit DecisionRepository instance (optional override)
  * - auditEventRepository: explicit AuditEventRepository instance (optional override)
+ * - agentRepository: explicit AgentRepository instance (optional override)
  *
  * @param {Object} [options={}]
  * @param {DecisionEngine} [options.decisionEngine]
@@ -27,6 +30,7 @@ import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
  * @param {Object} [options.actionRepository]
  * @param {Object} [options.decisionRepository]
  * @param {Object} [options.auditEventRepository]
+ * @param {Object} [options.agentRepository]
  * @returns {express.Router}
  */
 export function createDecisionRoutes(options = {}) {
@@ -36,6 +40,7 @@ export function createDecisionRoutes(options = {}) {
   let actionRepository;
   let decisionRepository;
   let auditEventRepository;
+  let agentRepository;
 
   if (options instanceof DecisionEngine || (options && typeof options.evaluate === "function")) {
     decisionEngine = options;
@@ -46,12 +51,14 @@ export function createDecisionRoutes(options = {}) {
     actionRepository = options.actionRepository;
     decisionRepository = options.decisionRepository;
     auditEventRepository = options.auditEventRepository;
+    agentRepository = options.agentRepository;
   }
 
   // Resolve repositories if Supabase is configured / provided
   const resolvedActionRepo = actionRepository || (supabaseClient ? createActionRepository(supabaseClient) : null);
   const resolvedDecisionRepo = decisionRepository || (supabaseClient ? createDecisionRepository(supabaseClient) : null);
   const resolvedAuditEventRepo = auditEventRepository || (supabaseClient ? createAuditEventRepository(supabaseClient) : null);
+  const resolvedAgentRepo = agentRepository || (supabaseClient ? createAgentRepository(supabaseClient) : null);
 
   const router = express.Router();
 
@@ -88,8 +95,64 @@ export function createDecisionRoutes(options = {}) {
           },
         });
       }
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        error: {
+          code: "DECISION_EVALUATION_FAILED",
+          message: "Unable to evaluate action",
+        },
+      });
+    }
 
-      // 2. Evaluate through DecisionEngine
+    // 2. Validate agent context (when persistence / Supabase / agentRepository is configured)
+    if (resolvedAgentRepo) {
+      if (!isValidUuid(action.agentId)) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "INVALID_AGENT_ID",
+            message: "Invalid agent ID format. Expected standard UUID.",
+          },
+        });
+      }
+
+      let agent;
+      try {
+        agent = await resolvedAgentRepo.getAgentById(action.agentId);
+      } catch (dbErr) {
+        return res.status(500).json({
+          success: false,
+          error: {
+            code: "AGENT_VERIFICATION_FAILED",
+            message: "Failed to verify agent existence",
+          },
+        });
+      }
+
+      if (!agent) {
+        return res.status(404).json({
+          success: false,
+          error: {
+            code: "AGENT_NOT_FOUND",
+            message: `Agent with ID "${action.agentId}" was not found`,
+          },
+        });
+      }
+
+      if (agent.status === "inactive") {
+        return res.status(403).json({
+          success: false,
+          error: {
+            code: "AGENT_INACTIVE",
+            message: `Agent with ID "${action.agentId}" is inactive`,
+          },
+        });
+      }
+    }
+
+    // 3. Evaluate through DecisionEngine
+    try {
       decisionResult = decisionEngine.evaluate(action);
     } catch (err) {
       // Security principle: FAIL CLOSED on unexpected engine exceptions
@@ -103,7 +166,7 @@ export function createDecisionRoutes(options = {}) {
       });
     }
 
-    // 3. Persist Action (if persistence is configured)
+    // 4. Persist Action (if persistence is configured)
     if (resolvedActionRepo) {
       try {
         await resolvedActionRepo.createAction(action);
