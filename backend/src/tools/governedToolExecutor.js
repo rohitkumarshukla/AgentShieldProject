@@ -1,8 +1,6 @@
 import { defaultToolRegistry } from "./toolRegistry.js";
 import { DecisionEngine } from "../decision/decisionEngine.js";
-import { createAction } from "../domain/action.js";
-import { createAuditEvent } from "../audit/auditEvent.js";
-import { authorizeAgentToolAction } from "../services/authorization.service.js";
+import { SecurityInterceptor } from "../security/interceptor.js";
 
 const defaultDecisionEngine = new DecisionEngine();
 
@@ -30,6 +28,14 @@ export class GovernedToolExecutor {
     this.decisionRepository = decisionRepository;
     this.auditEventRepository = auditEventRepository;
     this.approvalRepository = approvalRepository;
+
+    this.interceptor = new SecurityInterceptor({
+      agentRepository,
+      actionRepository,
+      decisionRepository,
+      auditEventRepository,
+      approvalRepository,
+    });
   }
 
   /**
@@ -65,7 +71,7 @@ export class GovernedToolExecutor {
       throw new Error("agentId, toolId, and operation are required to invoke a tool");
     }
 
-    // Step 1 & 2: Tool Registry Lookup
+    // Step 1: Tool Registry Lookup
     const opInfo = this.toolRegistry.getOperation(toolId, operation);
     if (!opInfo) {
       throw new Error(`Tool or operation '${toolId}.${operation}' not found in registry`);
@@ -73,127 +79,22 @@ export class GovernedToolExecutor {
 
     const { tool, operation: opDef } = opInfo;
 
-    // Step 3: Agent Lookup & Permission Authorization
-    let agent = null;
-    if (this.agentRepository) {
-      try {
-        agent = await this.agentRepository.getAgentById(agentId);
-      } catch (err) {
-        throw new Error(`Agent verification lookup failed: ${err.message}`);
-      }
-
-      if (!agent) {
-        throw new Error(`Agent with ID '${agentId}' does not exist`);
-      }
-
-      // Authorize agent status, environment, allowed tools, blocked operations, and financial caps
-      const authResult = authorizeAgentToolAction(agent, {
-        toolId,
-        operation,
-        parameters,
-        environment,
-      });
-
-      if (!authResult.authorized) {
-        return {
-          status: "BLOCKED",
-          executed: false,
-          decision: "BLOCK",
-          reason: authResult.reason || "Agent unauthorized to perform tool operation",
-          policyCode: authResult.code || "AGENT_UNAUTHORIZED",
-          pipeline: {
-            agentVerified: true,
-            toolFound: true,
-            permissionGranted: false,
-          },
-        };
-      }
-    }
-
-    // Step 4: Map tool call to canonical Action object
-    const count = typeof parameters.count === "number"
-      ? parameters.count
-      : (typeof parameters.recipientCount === "number"
-        ? parameters.recipientCount
-        : (Array.isArray(parameters.customerIds)
-          ? parameters.customerIds.length
-          : (Array.isArray(parameters.recipients) ? parameters.recipients.length : 1)));
-
-    const financialImpact = typeof parameters.amount === "number"
-      ? parameters.amount
-      : (typeof opDef.financialImpact === "function"
-        ? opDef.financialImpact(parameters)
-        : (typeof opDef.financialImpact === "number" ? opDef.financialImpact : 0));
-
-    const destination = opDef.destination || (tool.category === "communication" ? { type: "external" } : { type: "internal" });
-    const sensitivity = opDef.sensitivity || (tool.category === "data" ? { level: "sensitive" } : { level: "public" });
-
-    const actionPayload = {
+    // Step 2, 3, 4, 5: Security Pipeline (Authorization -> Risk -> Policy)
+    const interceptResult = await this.interceptor.interceptToolAction({
       agentId,
-      actionType: opDef.actionType || "execute",
-      target: `${toolId}.${operation}`,
-      description: opDef.description || `Execute ${tool.name} ${operation}`,
-      environment: environment || agent?.environment || "development",
-      scope: {
-        count,
-        target: `${toolId}.${operation}`,
-        parameters,
-      },
-      destination,
-      sensitivity,
-      financialImpact,
-      metadata: {
-        toolId,
-        operation,
-        reversibility: opDef.reversibility || "partially_reversible",
-      },
-    };
-
-    const action = createAction(actionPayload);
-
-    // Step 5: Evaluate through Risk & Policy Decision Engine
-    const decisionResult = this.decisionEngine.evaluate(action);
-    const { risk, policy } = decisionResult;
-
-    // Step 6: Create Audit Event
-    const auditEvent = createAuditEvent({
-      action,
-      risk,
-      policy,
+      toolId,
+      operation,
+      parameters,
+      environment,
+      toolDef: opInfo,
     });
 
-    // Step 7: Ordered Persistence (Action -> Decision -> Approval/Audit)
-    if (this.actionRepository) {
-      try {
-        await this.actionRepository.createAction(action);
-      } catch (err) {
-        console.warn("[AgentShield] Failed to persist action:", err.message);
-      }
-    }
+    const { action, risk, policy, audit } = interceptResult;
 
-    if (this.decisionRepository) {
-      try {
-        await this.decisionRepository.createDecision({
-          actionId: action.id,
-          risk,
-          policy,
-        });
-      } catch (err) {
-        console.warn("[AgentShield] Failed to persist decision:", err.message);
-      }
-    }
+    // Step 6: Outcome Handling
 
-    // Step 8: Outcome Handling
-    if (policy.decision === "BLOCK") {
-      if (this.auditEventRepository) {
-        try {
-          await this.auditEventRepository.createAuditEvent({
-            ...auditEvent,
-            status: "BLOCKED",
-          });
-        } catch {}
-      }
-
+    // A. Unauthorized or Blocked
+    if (!interceptResult.authorized || interceptResult.decision === "BLOCK") {
       return {
         status: "BLOCKED",
         executed: false,
@@ -201,18 +102,22 @@ export class GovernedToolExecutor {
         action,
         risk,
         policy,
-        audit: auditEvent,
-        message: `Action BLOCKED: ${policy.reason}`,
+        audit,
+        reason: policy?.reason || interceptResult.reason,
+        policyCode: policy?.policyCode || interceptResult.policyCode,
+        message: `Action BLOCKED: ${policy?.reason || interceptResult.reason}`,
+        pipeline: interceptResult.pipeline,
         suppressedImpact: {
           preventedOperation: `${toolId}.${operation}`,
-          scopeCount: count,
+          scopeCount: action?.scope?.count || 1,
         },
       };
     }
 
-    if (policy.decision === "APPROVAL_REQUIRED" || policy.requiresHumanApproval) {
+    // B. Approval Required
+    if (interceptResult.decision === "APPROVAL_REQUIRED" || policy?.requiresHumanApproval) {
       let approvalRecord = null;
-      if (this.approvalRepository) {
+      if (this.approvalRepository && action) {
         try {
           approvalRecord = await this.approvalRepository.createApproval({
             actionId: action.id,
@@ -222,18 +127,9 @@ export class GovernedToolExecutor {
               toolId,
               operation,
               parameters,
-              riskScore: risk.score,
-              policyCode: policy.policyCode,
+              riskScore: risk?.score,
+              policyCode: policy?.policyCode,
             },
-          });
-        } catch {}
-      }
-
-      if (this.auditEventRepository) {
-        try {
-          await this.auditEventRepository.createAuditEvent({
-            ...auditEvent,
-            status: "AWAITING_APPROVAL",
           });
         } catch {}
       }
@@ -245,13 +141,13 @@ export class GovernedToolExecutor {
         action,
         risk,
         policy,
-        audit: auditEvent,
+        audit,
         approval: approvalRecord,
         message: `Action requires human authorization before execution: ${policy.reason}`,
       };
     }
 
-    // Step 9: ALLOW: Check dryRun vs real execution
+    // C. Dry-Run Simulated Allow
     if (dryRun) {
       return {
         status: "SIMULATED_ALLOW",
@@ -265,6 +161,7 @@ export class GovernedToolExecutor {
       };
     }
 
+    // D. Real Tool Execution
     let toolResult;
     try {
       toolResult = await this.toolRegistry.executeOperation(toolId, operation, parameters);
@@ -276,13 +173,13 @@ export class GovernedToolExecutor {
       };
     }
 
-    if (this.auditEventRepository) {
+    if (this.auditEventRepository && audit) {
       try {
         await this.auditEventRepository.createAuditEvent({
-          ...auditEvent,
+          ...audit,
           status: toolResult.success ? "EXECUTED" : "FAILED",
           metadata: {
-            ...auditEvent.metadata,
+            ...audit.metadata,
             executionResult: toolResult,
           },
         });
@@ -296,7 +193,7 @@ export class GovernedToolExecutor {
       action,
       risk,
       policy,
-      audit: auditEvent,
+      audit,
       execution: toolResult,
       result: toolResult,
     };
