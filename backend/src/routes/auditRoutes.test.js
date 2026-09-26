@@ -372,3 +372,81 @@ test("GET /api/v1/agents/:agentId/audit-events: when Supabase not configured ret
     assert.equal(body.error.code, "SUPABASE_NOT_CONFIGURED");
   });
 });
+
+// -----------------------------------------------------------------------------
+// GET /api/v1/audit-events (Global List, Filters, Stats, Export)
+// -----------------------------------------------------------------------------
+
+test("GET /api/v1/audit-events: lists all audit events with pagination", async () => {
+  const mockItems = [
+    { id: "3fa85f64-5717-4562-b3fc-2c963f66afa6", action_type: "read", policy_decision: "ALLOW" },
+  ];
+  const fakeRepo = {
+    async listAuditEvents() {
+      return { items: mockItems, hasMore: false };
+    },
+    async getAuditEventById() {},
+    async listAuditEventsByActionId() {},
+    async listAuditEventsByAgentId() {},
+  };
+
+  await withCustomServer({ auditEventRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/audit-events?page=1&limit=10`);
+    assert.equal(res.status, 200);
+
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.auditEvents.length, 1);
+    assert.ok(body.data.auditEvents[0].integrityProof);
+  });
+});
+
+test("GET /api/v1/audit-events/stats: returns aggregated governance statistics", async () => {
+  const fakeRepo = {
+    async getAuditStats() {
+      return { totalEvents: 42, decisions: { allowed: 30, blocked: 10, approvalRequired: 2 } };
+    },
+    async listAuditEvents() { return { items: [], hasMore: false }; },
+    async getAuditEventById() {},
+    async listAuditEventsByActionId() {},
+    async listAuditEventsByAgentId() {},
+  };
+
+  await withCustomServer({ auditEventRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/audit-events/stats`);
+    assert.equal(res.status, 200);
+
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.totalEvents, 42);
+  });
+});
+
+test("GET /api/v1/audit-events/export: exports CSV and JSON formats", async () => {
+  const mockItems = [
+    { id: "3fa85f64-5717-4562-b3fc-2c963f66afa6", action_type: "read", policy_decision: "ALLOW", target: "crm.customers" },
+  ];
+  const fakeRepo = {
+    async listAuditEvents() {
+      return { items: mockItems, hasMore: false };
+    },
+    async getAuditEventById() {},
+    async listAuditEventsByActionId() {},
+    async listAuditEventsByAgentId() {},
+  };
+
+  await withCustomServer({ auditEventRepository: fakeRepo }, async (baseUrl) => {
+    // JSON export
+    const jsonRes = await fetch(`${baseUrl}/api/v1/audit-events/export?format=json`);
+    assert.equal(jsonRes.status, 200);
+    assert.ok(jsonRes.headers.get("content-type").includes("application/json"));
+
+    // CSV export
+    const csvRes = await fetch(`${baseUrl}/api/v1/audit-events/export?format=csv`);
+    assert.equal(csvRes.status, 200);
+    assert.ok(csvRes.headers.get("content-type").includes("text/csv"));
+    const csvText = await csvRes.text();
+    assert.ok(csvText.includes("ID,Action ID,Agent ID"));
+  });
+});
+
