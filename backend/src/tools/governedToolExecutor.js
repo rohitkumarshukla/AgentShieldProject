@@ -2,12 +2,16 @@ import { defaultToolRegistry } from "./toolRegistry.js";
 import { DecisionEngine } from "../decision/decisionEngine.js";
 import { createAction } from "../domain/action.js";
 import { createAuditEvent } from "../audit/auditEvent.js";
+import { authorizeAgentToolAction } from "../services/authorization.service.js";
 
 const defaultDecisionEngine = new DecisionEngine();
 
 /**
  * Governed Tool Executor.
  * Intercepts, evaluates, and conditionally executes tool calls through AgentShield security controls.
+ *
+ * Strict Architecture Workflow:
+ *   Agent -> Tool -> Permission -> Risk -> Policy -> Decision -> (Execution if ALLOW)
  */
 export class GovernedToolExecutor {
   constructor({
@@ -17,6 +21,7 @@ export class GovernedToolExecutor {
     actionRepository = null,
     decisionRepository = null,
     auditEventRepository = null,
+    approvalRepository = null,
   } = {}) {
     this.toolRegistry = toolRegistry;
     this.decisionEngine = decisionEngine;
@@ -24,18 +29,29 @@ export class GovernedToolExecutor {
     this.actionRepository = actionRepository;
     this.decisionRepository = decisionRepository;
     this.auditEventRepository = auditEventRepository;
+    this.approvalRepository = approvalRepository;
   }
 
   /**
-   * Evaluates and executes a tool call under AgentShield governance.
+   * Evaluates and executes a tool call under the strict AgentShield governance pipeline.
+   *
+   * Pipeline Steps:
+   * 1. Agent Verification & Status Check
+   * 2. Tool Lookup & Schema Verification
+   * 3. Permission & Boundary Authorization
+   * 4. Action Translation & Risk Evaluation
+   * 5. Policy Rule Determination
+   * 6. Decision & Audit Logging
+   * 7. Conditional Execution (only if ALLOW and not dryRun)
    *
    * @param {Object} request
    * @param {string} request.agentId - UUID of the requesting AI Agent
    * @param {string} request.toolId - Target tool ID (e.g. 'customer_crm')
-   * @param {string} request.operation - Operation name (e.g. 'delete_customers')
+   * @param {string} request.operation - Operation name (e.g. 'deleteCustomers')
    * @param {Object} [request.parameters={}] - Input parameters for tool operation
    * @param {string} [request.environment="development"] - Target execution environment
-   * @returns {Promise<Object>} Execution result or block/approval notice
+   * @param {boolean} [request.dryRun=false] - If true, evaluates governance pipeline without executing downstream mock tool
+   * @returns {Promise<Object>} Structured governance outcome
    */
   async invokeGovernedTool({
     agentId,
@@ -43,11 +59,13 @@ export class GovernedToolExecutor {
     operation,
     parameters = {},
     environment = "development",
+    dryRun = false,
   }) {
     if (!agentId || !toolId || !operation) {
       throw new Error("agentId, toolId, and operation are required to invoke a tool");
     }
 
+    // Step 1 & 2: Tool Registry Lookup
     const opInfo = this.toolRegistry.getOperation(toolId, operation);
     if (!opInfo) {
       throw new Error(`Tool or operation '${toolId}.${operation}' not found in registry`);
@@ -55,7 +73,7 @@ export class GovernedToolExecutor {
 
     const { tool, operation: opDef } = opInfo;
 
-    // 1. Agent Verification & Permissions Check
+    // Step 3: Agent Lookup & Permission Authorization
     let agent = null;
     if (this.agentRepository) {
       try {
@@ -68,43 +86,38 @@ export class GovernedToolExecutor {
         throw new Error(`Agent with ID '${agentId}' does not exist`);
       }
 
-      if (agent.status !== "active") {
-        throw new Error(`Agent '${agent.name || agentId}' is inactive and prohibited from executing tools`);
-      }
+      // Authorize agent status, environment, allowed tools, blocked operations, and financial caps
+      const authResult = authorizeAgentToolAction(agent, {
+        toolId,
+        operation,
+        parameters,
+        environment,
+      });
 
-      // Check agent permissions if configured
-      const permissions = agent.metadata?.permissions;
-      if (permissions) {
-        // Allowed tools check
-        if (Array.isArray(permissions.allowedTools) && !permissions.allowedTools.includes("*") && !permissions.allowedTools.includes(toolId)) {
-          return {
-            status: "BLOCKED",
-            executed: false,
-            decision: "BLOCK",
-            reason: `Agent is not authorized to access tool '${tool.name || toolId}' under agent permissions`,
-            policyCode: "agent_permission_tool_prohibited",
-          };
-        }
-
-        // Blocked operations check
-        if (Array.isArray(permissions.blockedOperations) && permissions.blockedOperations.includes(operation)) {
-          return {
-            status: "BLOCKED",
-            executed: false,
-            decision: "BLOCK",
-            reason: `Operation '${operation}' is explicitly prohibited by agent policy`,
-            policyCode: "agent_permission_operation_blocked",
-          };
-        }
+      if (!authResult.authorized) {
+        return {
+          status: "BLOCKED",
+          executed: false,
+          decision: "BLOCK",
+          reason: authResult.reason || "Agent unauthorized to perform tool operation",
+          policyCode: authResult.code || "AGENT_UNAUTHORIZED",
+          pipeline: {
+            agentVerified: true,
+            toolFound: true,
+            permissionGranted: false,
+          },
+        };
       }
     }
 
-    // 2. Map tool call to canonical Action object
+    // Step 4: Map tool call to canonical Action object
     const count = typeof parameters.count === "number"
       ? parameters.count
-      : (Array.isArray(parameters.customerIds)
-        ? parameters.customerIds.length
-        : (Array.isArray(parameters.recipients) ? parameters.recipients.length : 1));
+      : (typeof parameters.recipientCount === "number"
+        ? parameters.recipientCount
+        : (Array.isArray(parameters.customerIds)
+          ? parameters.customerIds.length
+          : (Array.isArray(parameters.recipients) ? parameters.recipients.length : 1)));
 
     const financialImpact = typeof parameters.amount === "number"
       ? parameters.amount
@@ -120,7 +133,7 @@ export class GovernedToolExecutor {
       actionType: opDef.actionType || "execute",
       target: `${toolId}.${operation}`,
       description: opDef.description || `Execute ${tool.name} ${operation}`,
-      environment: environment || agent?.environment || "production",
+      environment: environment || agent?.environment || "development",
       scope: {
         count,
         target: `${toolId}.${operation}`,
@@ -138,18 +151,18 @@ export class GovernedToolExecutor {
 
     const action = createAction(actionPayload);
 
-    // 3. Evaluate through Risk and Policy Decision Engine
+    // Step 5: Evaluate through Risk & Policy Decision Engine
     const decisionResult = this.decisionEngine.evaluate(action);
     const { risk, policy } = decisionResult;
 
-    // 4. Create Audit Event
+    // Step 6: Create Audit Event
     const auditEvent = createAuditEvent({
       action,
       risk,
       policy,
     });
 
-    // 5. Persist to database if repositories are configured
+    // Step 7: Ordered Persistence (Action -> Decision -> Approval/Audit)
     if (this.actionRepository) {
       try {
         await this.actionRepository.createAction(action);
@@ -170,7 +183,7 @@ export class GovernedToolExecutor {
       }
     }
 
-    // 6. Handle Decision Outcomes
+    // Step 8: Outcome Handling
     if (policy.decision === "BLOCK") {
       if (this.auditEventRepository) {
         try {
@@ -198,6 +211,24 @@ export class GovernedToolExecutor {
     }
 
     if (policy.decision === "APPROVAL_REQUIRED" || policy.requiresHumanApproval) {
+      let approvalRecord = null;
+      if (this.approvalRepository) {
+        try {
+          approvalRecord = await this.approvalRepository.createApproval({
+            actionId: action.id,
+            status: "pending",
+            reason: policy.reason,
+            metadata: {
+              toolId,
+              operation,
+              parameters,
+              riskScore: risk.score,
+              policyCode: policy.policyCode,
+            },
+          });
+        } catch {}
+      }
+
       if (this.auditEventRepository) {
         try {
           await this.auditEventRepository.createAuditEvent({
@@ -215,11 +246,25 @@ export class GovernedToolExecutor {
         risk,
         policy,
         audit: auditEvent,
+        approval: approvalRecord,
         message: `Action requires human authorization before execution: ${policy.reason}`,
       };
     }
 
-    // 7. ALLOW: Execute Tool Operation safely
+    // Step 9: ALLOW: Check dryRun vs real execution
+    if (dryRun) {
+      return {
+        status: "SIMULATED_ALLOW",
+        executed: false,
+        dryRun: true,
+        decision: "ALLOW",
+        action,
+        risk,
+        policy,
+        message: "Governance policy allows action. (Dry-run mode: tool execution omitted)",
+      };
+    }
+
     let toolResult;
     try {
       toolResult = await this.toolRegistry.executeOperation(toolId, operation, parameters);
@@ -253,9 +298,11 @@ export class GovernedToolExecutor {
       policy,
       audit: auditEvent,
       execution: toolResult,
+      result: toolResult,
     };
   }
 }
 
-export const defaultGovernedToolExecutor = new GovernedToolExecutor();
-export default defaultGovernedToolExecutor;
+export default {
+  GovernedToolExecutor,
+};
