@@ -5,6 +5,8 @@ import agentRoutes from "./routes/agentRoutes.js";
 import actionRoutes from "./routes/actionRoutes.js";
 import decisionHistoryRoutes from "./routes/decisionHistoryRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
+import toolRoutes from "./routes/toolRoutes.js";
+import permissionRoutes from "./routes/permissionRoutes.js";
 
 // The Express application instance is separated from server listening logic
 // so it can be imported cleanly by integration tests without opening network ports.
@@ -29,6 +31,8 @@ app.use("/api/v1", agentRoutes);
 app.use("/api/v1", actionRoutes);
 app.use("/api/v1", decisionHistoryRoutes);
 app.use("/api/v1", auditRoutes);
+app.use("/api/v1", toolRoutes);
+app.use("/api/v1", permissionRoutes);
 
 // Catch-all 404 handler for unknown routes
 app.use((req, res) => {

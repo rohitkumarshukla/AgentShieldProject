@@ -12,6 +12,7 @@ export function createMockSupabaseClient({ data = null, error = null } = {}) {
     tables: [],
     inserts: [],
     updates: [],
+    deletes: 0,
     selects: [],
     eqFilters: [],
     ranges: [],
@@ -31,6 +32,10 @@ export function createMockSupabaseClient({ data = null, error = null } = {}) {
         },
         update(payload) {
           calls.updates.push(payload);
+          return queryBuilder;
+        },
+        delete() {
+          calls.deletes += 1;
           return queryBuilder;
         },
         select(columns) {

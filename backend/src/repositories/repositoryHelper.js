@@ -27,7 +27,9 @@ export function handleDbResponse(response, contextMessage) {
       return null;
     }
     const message = response.error.message || "Database error";
-    throw new Error(`${contextMessage}: ${message}`);
+    const error = new Error(`${contextMessage}: ${message}`);
+    if (typeof response.error.code === "string") error.code = response.error.code;
+    throw error;
   }
   return response.data;
 }

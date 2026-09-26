@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 import { createDecisionRoutes } from "./decisionRoutes.js";
 import { errorHandler } from "../middleware/errorHandler.js";
+import { DecisionEngine } from "../decision/decisionEngine.js";
 
 // Helper to run ephemeral HTTP server for integration tests in isolated offline mode
 async function withServer(fn) {
@@ -1041,5 +1042,52 @@ test("TEST 32 (Task 23): Offline mode works without requiring Supabase or agent 
     const body = await response.json();
     assert.equal(body.success, true);
     assert.equal(body.data.policy.decision, "ALLOW");
+  });
+});
+
+test("tool reference without a grant is denied before a low-risk ALLOW can be produced", async () => {
+  const agentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const toolId = "4ba85f64-5717-4562-b3fc-2c963f66afa7";
+  const engine = { called: false, evaluate() { this.called = true; return { policy: { decision: "ALLOW" } }; } };
+  const permissionService = { async checkAgentToolPermission() { return { allowed: false, permission: null }; } };
+  await withCustomRouter({
+    decisionEngine: engine,
+    agentRepository: { async getAgentById() { return { id: agentId, status: "active" }; } },
+    permissionService,
+  }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, tool_id: toolId, actionType: "read", target: "records", description: "Read records" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.error.code, "PERMISSION_DENIED");
+    assert.equal(engine.called, false);
+  });
+});
+
+test("an explicit grant still passes through risk and policy evaluation", async () => {
+  const agentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const toolId = "4ba85f64-5717-4562-b3fc-2c963f66afa7";
+  const calls = { risk: false, policy: false };
+  const engine = new DecisionEngine({
+    riskEngine: { evaluate() { calls.risk = true; return { score: 75, level: "HIGH", factors: [] }; } },
+    policyEngine: { evaluate() { calls.policy = true; return { decision: "APPROVAL_REQUIRED", policyCode: "test_high_risk", reason: "Review required", requiresHumanApproval: true }; } },
+  });
+  const permissionService = { async checkAgentToolPermission() { return { allowed: true, permission: { id: "grant" } }; } };
+  await withCustomRouter({
+    decisionEngine: engine,
+    agentRepository: { async getAgentById() { return { id: agentId, status: "active" }; } },
+    permissionService,
+  }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agentId, toolId, actionType: "read", target: "records", description: "Read records" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.data.risk.level, "HIGH");
+    assert.equal(body.data.policy.decision, "APPROVAL_REQUIRED");
+    assert.deepEqual(calls, { risk: true, policy: true });
   });
 });

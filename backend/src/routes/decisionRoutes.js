@@ -10,6 +10,9 @@ import { createActionRepository } from "../repositories/actionRepository.js";
 import { createDecisionRepository } from "../repositories/decisionRepository.js";
 import { createAuditEventRepository } from "../repositories/auditEventRepository.js";
 import { createAgentRepository } from "../repositories/agentRepository.js";
+import { createToolRepository } from "../repositories/toolRepository.js";
+import { createPermissionRepository } from "../repositories/permissionRepository.js";
+import { createPermissionService } from "../services/permissionService.js";
 import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
 import { isValidUuid } from "../domain/agentValidator.js";
 
@@ -41,6 +44,9 @@ export function createDecisionRoutes(options = {}) {
   let decisionRepository;
   let auditEventRepository;
   let agentRepository;
+  let toolRepository;
+  let permissionRepository;
+  let permissionService;
 
   if (options instanceof DecisionEngine || (options && typeof options.evaluate === "function")) {
     decisionEngine = options;
@@ -52,6 +58,9 @@ export function createDecisionRoutes(options = {}) {
     decisionRepository = options.decisionRepository;
     auditEventRepository = options.auditEventRepository;
     agentRepository = options.agentRepository;
+    toolRepository = options.toolRepository;
+    permissionRepository = options.permissionRepository;
+    permissionService = options.permissionService;
   }
 
   // Resolve repositories if Supabase is configured / provided
@@ -59,12 +68,18 @@ export function createDecisionRoutes(options = {}) {
   const resolvedDecisionRepo = decisionRepository || (supabaseClient ? createDecisionRepository(supabaseClient) : null);
   const resolvedAuditEventRepo = auditEventRepository || (supabaseClient ? createAuditEventRepository(supabaseClient) : null);
   const resolvedAgentRepo = agentRepository || (supabaseClient ? createAgentRepository(supabaseClient) : null);
+  const resolvedToolRepo = toolRepository || (supabaseClient ? createToolRepository(supabaseClient) : null);
+  const resolvedPermissionRepo = permissionRepository || (supabaseClient ? createPermissionRepository(supabaseClient) : null);
+  const resolvedPermissionService = permissionService || (resolvedPermissionRepo
+    ? createPermissionService({ agentRepository: resolvedAgentRepo, toolRepository: resolvedToolRepo, permissionRepository: resolvedPermissionRepo })
+    : null);
 
   const router = express.Router();
 
   router.post("/decisions", asyncHandler(async (req, res) => {
     let decisionResult;
     let action;
+    let toolId;
 
     // 1. Normalize and validate action
     try {
@@ -80,6 +95,11 @@ export function createDecisionRoutes(options = {}) {
           },
         });
       }
+
+      if (body.tool_id !== undefined && body.toolId !== undefined && body.tool_id !== body.toolId) {
+        return res.status(400).json({ success: false, error: { code: "INVALID_TOOL_ID", message: "Provide one consistent tool ID" } });
+      }
+      toolId = body.tool_id ?? body.toolId;
 
       // Normalize into canonical action structure
       action = createAction(body);
@@ -151,7 +171,33 @@ export function createDecisionRoutes(options = {}) {
       }
     }
 
-    // 3. Evaluate through DecisionEngine
+    // Optional request-level tool reference is authorized before risk/policy.
+    // tool_id is not yet part of the persisted Action schema; this is the
+    // minimal enforcement boundary until action/tool persistence is designed.
+    if (toolId !== undefined && toolId !== null) {
+      if (!isValidUuid(toolId)) {
+        return res.status(400).json({ success: false, error: { code: "INVALID_TOOL_ID", message: "Invalid tool ID format. Expected standard UUID." } });
+      }
+      if (!resolvedPermissionService) {
+        return res.status(403).json({ success: false, error: { code: "PERMISSION_DENIED", message: "Agent is not permitted to use this tool" } });
+      }
+      let permissionCheck;
+      try {
+        permissionCheck = await resolvedPermissionService.checkAgentToolPermission(action.agentId, toolId, {
+          actionType: action.actionType,
+          scope: action.scope,
+          environment: action.environment,
+        });
+      } catch (permissionError) {
+        logRequestError(req, permissionError, { code: "PERMISSION_CHECK_FAILED" });
+        return res.status(500).json({ success: false, error: { code: "PERMISSION_CHECK_FAILED", message: "Unable to verify tool permission" } });
+      }
+      if (!permissionCheck.allowed) {
+        return res.status(403).json({ success: false, error: { code: "PERMISSION_DENIED", message: "Agent is not permitted to use this tool" } });
+      }
+    }
+
+    // 3. Evaluate through DecisionEngine only after any requested permission check.
     try {
       decisionResult = decisionEngine.evaluate(action);
     } catch (err) {
