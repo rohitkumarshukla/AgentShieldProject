@@ -123,6 +123,47 @@ export function createActionRoutes(options = {}) {
     }
   });
 
+  // ---------------------------------------------------------------------------
+  // POST /api/v1/actions/execute — Intercept and conditionally execute action
+  // ---------------------------------------------------------------------------
+  router.post("/actions/execute", requireService, async (req, res) => {
+    try {
+      const { agentId, toolId, operation, parameters = {}, environment = "development", dryRun = false } = req.body || {};
+      if (!agentId || !toolId || !operation) {
+        return res.status(400).json({
+          success: false,
+          error: {
+            code: "INVALID_ACTION_PAYLOAD",
+            message: "agentId, toolId, and operation are required to execute an action",
+          },
+        });
+      }
+
+      const result = await actionService.createAndExecuteAction({
+        agentId,
+        toolId,
+        operation,
+        parameters,
+        environment,
+        dryRun,
+      });
+
+      return res.status(200).json({
+        success: true,
+        data: result,
+      });
+    } catch (err) {
+      const statusCode = err instanceof ActionServiceError ? err.statusCode : 400;
+      return res.status(statusCode).json({
+        success: false,
+        error: {
+          code: err.code || "ACTION_EXECUTION_FAILED",
+          message: err.message,
+        },
+      });
+    }
+  });
+
   return router;
 }
 

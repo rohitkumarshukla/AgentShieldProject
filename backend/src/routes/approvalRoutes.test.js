@@ -101,6 +101,54 @@ test("Approval Routes API", async (t) => {
     });
   });
 
+  await t.test("POST /api/v1/approvals/:id/reject: human denies paused action", async () => {
+    const pendingToReject = {
+      id: "a0000000-0000-0000-0000-000000000002",
+      action_id: "ac000000-0000-0000-0000-000000000002",
+      status: "pending",
+      reviewer: null,
+      reason: null,
+      created_at: new Date().toISOString(),
+    };
+    fakeApprovalRepo.items.push(pendingToReject);
+
+    await withCustomServer({ approvalRepository: fakeApprovalRepo }, async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/approvals/${pendingToReject.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewer: "sec_operator@enterprise.com", reason: "Potential security breach" }),
+      });
+
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.success, true);
+      assert.equal(body.data.approval.status, "rejected");
+      assert.equal(body.data.approval.reason, "Potential security breach");
+    });
+  });
+
+  await t.test("GET /api/v1/approvals/:id: returns 400 for invalid UUID", async () => {
+    await withCustomServer({ approvalRepository: fakeApprovalRepo }, async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/approvals/invalid-uuid`);
+      assert.equal(res.status, 400);
+
+      const body = await res.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "INVALID_APPROVAL_ID");
+    });
+  });
+
+  await t.test("GET /api/v1/approvals/:id: returns 404 for non-existent approval", async () => {
+    await withCustomServer({ approvalRepository: fakeApprovalRepo }, async (baseUrl) => {
+      const res = await fetch(`${baseUrl}/api/v1/approvals/00000000-0000-0000-0000-999999999999`);
+      assert.equal(res.status, 404);
+
+      const body = await res.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "APPROVAL_NOT_FOUND");
+    });
+  });
+
   await t.test("Offline mode returns 503 when repository unconfigured", async () => {
     await withCustomServer({ supabaseClient: null, approvalRepository: null }, async (baseUrl) => {
       const res = await fetch(`${baseUrl}/api/v1/approvals`);

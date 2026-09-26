@@ -62,8 +62,23 @@ export function createApprovalService({
           limit: safeLimit,
         });
 
+        const items = Array.isArray(result?.items) ? result.items : [];
+        if (actionRepository && items.length > 0) {
+          await Promise.all(
+            items.map(async (item) => {
+              if (item.action_id && !item.action) {
+                try {
+                  item.action = await actionRepository.getActionById(item.action_id);
+                } catch (_) {
+                  // Non-blocking enrichment failure
+                }
+              }
+            })
+          );
+        }
+
         return {
-          approvals: result?.items || [],
+          approvals: items,
           pagination: {
             page: safePage,
             limit: safeLimit,
@@ -191,7 +206,11 @@ export function createApprovalService({
      * @param {boolean} [options.executeTool=true]
      * @returns {Promise<{ approval: Object, execution: Object|null }>}
      */
-    async approveAction(id, { reviewer = "human_reviewer", notes = "Approved by operator", executeTool = true } = {}) {
+    async approveAction(id, options = {}) {
+      const reviewer = options.reviewer || options.reviewerId || options.reviewer_id || "human_reviewer";
+      const notes = options.notes || options.reason || options.comment || options.justification || "Approved by security operator";
+      const executeTool = options.executeTool !== undefined ? options.executeTool : true;
+
       if (!id || !isValidUuid(id)) {
         throw new ApprovalServiceError(
           "Invalid approval ID format. Expected standard UUID.",
@@ -221,8 +240,8 @@ export function createApprovalService({
         // 1. Update Approval Record in DB
         const resolved = await approvalRepository.resolveApproval(id.trim(), {
           status: "approved",
-          reviewer: reviewer || "human_reviewer",
-          reason: notes || "Approved by security operator",
+          reviewer,
+          reason: notes,
         });
 
         // 2. Execute Downstream Tool Operation if requested & Action exists
@@ -307,7 +326,10 @@ export function createApprovalService({
      * @param {string} [options.reason='Rejected by security operator']
      * @returns {Promise<{ approval: Object }>}
      */
-    async rejectAction(id, { reviewer = "human_reviewer", reason = "Rejected by security operator" } = {}) {
+    async rejectAction(id, options = {}) {
+      const reviewer = options.reviewer || options.reviewerId || options.reviewer_id || "human_reviewer";
+      const reason = options.reason || options.notes || options.comment || options.justification || "Rejected by security operator";
+
       if (!id || !isValidUuid(id)) {
         throw new ApprovalServiceError(
           "Invalid approval ID format. Expected standard UUID.",
@@ -337,8 +359,8 @@ export function createApprovalService({
         // 1. Update Approval Record to rejected
         const resolved = await approvalRepository.resolveApproval(id.trim(), {
           status: "rejected",
-          reviewer: reviewer || "human_reviewer",
-          reason: reason || "Rejected by security operator",
+          reviewer,
+          reason,
         });
 
         // 2. Record Audit Event

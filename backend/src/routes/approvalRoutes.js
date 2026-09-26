@@ -136,8 +136,19 @@ export function createApprovalRoutes(options = {}) {
   // ---------------------------------------------------------------------------
   router.post("/approvals/:id/approve", requireService, async (req, res) => {
     const { id } = req.params;
-    const reviewer = req.body?.reviewer || req.user?.email || "human_reviewer";
-    const notes = req.body?.notes || req.body?.reason || "Approved by security operator";
+    const reviewer =
+      req.body?.reviewer ||
+      req.body?.reviewerId ||
+      req.body?.reviewer_id ||
+      req.headers?.["x-reviewer-id"] ||
+      req.user?.email ||
+      "human_reviewer";
+    const notes =
+      req.body?.notes ||
+      req.body?.reason ||
+      req.body?.comment ||
+      req.body?.justification ||
+      "Approved by security operator";
 
     if (!isValidUuid(id)) {
       return res.status(400).json({
@@ -153,7 +164,7 @@ export function createApprovalRoutes(options = {}) {
       const result = await approvalService.approveAction(id.trim(), {
         reviewer,
         notes,
-        executeTool: true,
+        executeTool: req.body?.executeTool !== false,
       });
 
       return res.status(200).json({
@@ -181,8 +192,19 @@ export function createApprovalRoutes(options = {}) {
   // ---------------------------------------------------------------------------
   router.post("/approvals/:id/reject", requireService, async (req, res) => {
     const { id } = req.params;
-    const reviewer = req.body?.reviewer || req.user?.email || "human_reviewer";
-    const reason = req.body?.reason || req.body?.notes || "Rejected by security operator";
+    const reviewer =
+      req.body?.reviewer ||
+      req.body?.reviewerId ||
+      req.body?.reviewer_id ||
+      req.headers?.["x-reviewer-id"] ||
+      req.user?.email ||
+      "human_reviewer";
+    const reason =
+      req.body?.reason ||
+      req.body?.notes ||
+      req.body?.comment ||
+      req.body?.justification ||
+      "Rejected by security operator";
 
     if (!isValidUuid(id)) {
       return res.status(400).json({
