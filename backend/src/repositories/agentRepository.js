@@ -13,10 +13,16 @@ export function toAgentRow(agent = {}) {
   if (agent.id !== undefined) row.id = agent.id;
   if (agent.name !== undefined) row.name = agent.name;
   if (agent.description !== undefined) row.description = agent.description;
-  if (agent.api_key_hash !== undefined) row.api_key_hash = agent.api_key_hash;
   if (agent.status !== undefined) row.status = agent.status;
   if (agent.environment !== undefined) row.environment = agent.environment;
   
+  if (agent.apiKeyHash !== undefined || agent.api_key_hash !== undefined) {
+    row.api_key_hash = agent.apiKeyHash || agent.api_key_hash;
+  }
+  if (agent.apiKeyPrefix !== undefined || agent.api_key_prefix !== undefined) {
+    row.api_key_prefix = agent.apiKeyPrefix || agent.api_key_prefix;
+  }
+
   if (agent.metadata !== undefined) {
     row.metadata = typeof agent.metadata === "object" && agent.metadata !== null && !Array.isArray(agent.metadata)
       ? { ...agent.metadata }
@@ -85,6 +91,26 @@ export function createAgentRepository(supabaseClient) {
     },
 
     /**
+     * Retrieves an agent record matching the provided SHA-256 API key hash.
+     *
+     * @param {string} apiKeyHash - Hex SHA-256 string
+     * @returns {Promise<Object|null>} Found agent record or null
+     */
+    async getAgentByApiKeyHash(apiKeyHash) {
+      if (!apiKeyHash || typeof apiKeyHash !== "string") {
+        throw new Error("Failed to get agent: valid apiKeyHash is required");
+      }
+
+      const response = await supabaseClient
+        .from("agents")
+        .select()
+        .eq("api_key_hash", apiKeyHash)
+        .single();
+
+      return handleDbResponse(response, "Failed to get agent by API key hash");
+    },
+
+    /**
      * Retrieves agent records with optional pagination.
      *
      * @param {Object} [options={}]
@@ -117,16 +143,46 @@ export function createAgentRepository(supabaseClient) {
       return Array.isArray(data) ? data : [];
     },
 
+    /**
+     * Updates an existing agent record.
+     *
+     * @param {string} id
+     * @param {Object} updates
+     * @returns {Promise<Object>}
+     */
     async updateAgent(id, updates) {
-      if (!id || typeof id !== "string") throw new Error("Failed to update agent: valid id is required");
-      const response = await supabaseClient.from("agents").update(toAgentRow(updates)).eq("id", id).select().single();
+      if (!id || typeof id !== "string") {
+        throw new Error("Failed to update agent: valid id is required");
+      }
+      const response = await supabaseClient
+        .from("agents")
+        .update(toAgentRow(updates))
+        .eq("id", id)
+        .select()
+        .single();
       return handleDbResponse(response, "Failed to update agent");
     },
 
+    /**
+     * Updates the API key hash of an agent.
+     *
+     * @param {string} id
+     * @param {string} apiKeyHash
+     * @returns {Promise<Object>}
+     */
     async updateApiKeyHash(id, apiKeyHash) {
-      if (!id || typeof id !== "string") throw new Error("Failed to update agent API key: valid id is required");
-      if (typeof apiKeyHash !== "string" || !apiKeyHash) throw new Error("Failed to update agent API key: hash is required");
-      const response = await supabaseClient.from("agents").update({ api_key_hash: apiKeyHash }).eq("id", id).select().single();
+      if (!id || typeof id !== "string") {
+        throw new Error("Failed to update agent API key: valid id is required");
+      }
+      if (typeof apiKeyHash !== "string" || !apiKeyHash) {
+        throw new Error("Failed to update agent API key: hash is required");
+      }
+      const response = await supabaseClient
+        .from("agents")
+        .update({ api_key_hash: apiKeyHash })
+        .eq("id", id)
+        .select()
+        .single();
       return handleDbResponse(response, "Failed to update agent API key");
     },
   };

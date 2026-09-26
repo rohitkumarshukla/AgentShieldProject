@@ -1,4 +1,5 @@
 import express from "express";
+import { ApiError } from "./utils/ApiError.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import decisionRoutes from "./routes/decisionRoutes.js";
 import agentRoutes from "./routes/agentRoutes.js";
@@ -30,15 +31,15 @@ app.use("/api/v1", actionRoutes);
 app.use("/api/v1", decisionHistoryRoutes);
 app.use("/api/v1", auditRoutes);
 
-// Catch-all 404 handler for unknown routes
-app.use((req, res) => {
-  res.status(404).json({
-    success: false,
-    error: {
-      code: "NOT_FOUND",
-      message: `Route ${req.method} ${req.originalUrl} not found`,
-    },
-  });
+// Catch-all 404 — forward through ApiError so the shared handler logs location
+app.use((req, res, next) => {
+  next(
+    new ApiError(
+      404,
+      `Route ${req.method} ${req.originalUrl} not found`,
+      "NOT_FOUND",
+    ),
+  );
 });
 
 // Error handling middleware for malformed JSON and unexpected server errors
