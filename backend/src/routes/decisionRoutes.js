@@ -4,20 +4,60 @@ import { validateAuditEvent } from "../audit/auditEventValidator.js";
 import { DecisionEngine } from "../decision/decisionEngine.js";
 import { createAction } from "../domain/action.js";
 import { validateAction } from "../domain/actionValidator.js";
-
-const router = express.Router();
-const defaultDecisionEngine = new DecisionEngine();
+import { createActionRepository } from "../repositories/actionRepository.js";
+import { createDecisionRepository } from "../repositories/decisionRepository.js";
+import { createAuditEventRepository } from "../repositories/auditEventRepository.js";
+import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
 
 /**
- * Creates decision router with optional injected DecisionEngine for testing.
+ * Creates a decision router with configurable dependencies.
  *
- * @param {DecisionEngine} [decisionEngine]
+ * Supports dependency injection for testing:
+ * - decisionEngine: DecisionEngine instance
+ * - supabaseClient: explicit Supabase client instance (or null to disable persistence)
+ * - actionRepository: explicit ActionRepository instance (optional override)
+ * - decisionRepository: explicit DecisionRepository instance (optional override)
+ * - auditEventRepository: explicit AuditEventRepository instance (optional override)
+ *
+ * @param {Object} [options={}]
+ * @param {DecisionEngine} [options.decisionEngine]
+ * @param {Object|null} [options.supabaseClient]
+ * @param {Object} [options.actionRepository]
+ * @param {Object} [options.decisionRepository]
+ * @param {Object} [options.auditEventRepository]
  * @returns {express.Router}
  */
-export function createDecisionRoutes(decisionEngine = defaultDecisionEngine) {
-  router.post("/decisions", (req, res, next) => {
-    let decisionResult;
+export function createDecisionRoutes(options = {}) {
+  // Support legacy signature: createDecisionRoutes(decisionEngine)
+  let decisionEngine;
+  let supabaseClient;
+  let actionRepository;
+  let decisionRepository;
+  let auditEventRepository;
 
+  if (options instanceof DecisionEngine || (options && typeof options.evaluate === "function")) {
+    decisionEngine = options;
+    supabaseClient = defaultSupabaseClient;
+  } else {
+    decisionEngine = options.decisionEngine || new DecisionEngine();
+    supabaseClient = options.supabaseClient !== undefined ? options.supabaseClient : defaultSupabaseClient;
+    actionRepository = options.actionRepository;
+    decisionRepository = options.decisionRepository;
+    auditEventRepository = options.auditEventRepository;
+  }
+
+  // Resolve repositories if Supabase is configured / provided
+  const resolvedActionRepo = actionRepository || (supabaseClient ? createActionRepository(supabaseClient) : null);
+  const resolvedDecisionRepo = decisionRepository || (supabaseClient ? createDecisionRepository(supabaseClient) : null);
+  const resolvedAuditEventRepo = auditEventRepository || (supabaseClient ? createAuditEventRepository(supabaseClient) : null);
+
+  const router = express.Router();
+
+  router.post("/decisions", async (req, res, next) => {
+    let decisionResult;
+    let action;
+
+    // 1. Normalize and validate action
     try {
       const body = req.body;
 
@@ -33,7 +73,7 @@ export function createDecisionRoutes(decisionEngine = defaultDecisionEngine) {
       }
 
       // Normalize into canonical action structure
-      const action = createAction(body);
+      action = createAction(body);
 
       // Validate action using domain validator
       const validation = validateAction(action);
@@ -47,7 +87,7 @@ export function createDecisionRoutes(decisionEngine = defaultDecisionEngine) {
         });
       }
 
-      // Evaluate through DecisionEngine
+      // 2. Evaluate through DecisionEngine
       decisionResult = decisionEngine.evaluate(action);
     } catch (err) {
       // Security principle: FAIL CLOSED on unexpected engine exceptions
@@ -60,9 +100,40 @@ export function createDecisionRoutes(decisionEngine = defaultDecisionEngine) {
       });
     }
 
+    // 3. Persist Action (if persistence is configured)
+    if (resolvedActionRepo) {
+      try {
+        await resolvedActionRepo.createAction(action);
+      } catch (persistErr) {
+        return res.status(500).json({
+          success: false,
+          error: {
+            code: "ACTION_PERSISTENCE_FAILED",
+            message: "Failed to persist action",
+          },
+        });
+      }
+    }
+
+    // 4. Persist Decision (if persistence is configured)
+    if (resolvedDecisionRepo) {
+      try {
+        await resolvedDecisionRepo.createDecision(decisionResult);
+      } catch (persistErr) {
+        return res.status(500).json({
+          success: false,
+          error: {
+            code: "DECISION_PERSISTENCE_FAILED",
+            message: "Failed to persist decision",
+          },
+        });
+      }
+    }
+
+    // 5. In-memory audit event creation and validation
+    let auditEvent;
     try {
-      // Construct and validate the audit event using the evaluated decision output
-      const auditEvent = createAuditEvent({
+      auditEvent = createAuditEvent({
         action: decisionResult.action,
         risk: decisionResult.risk,
         policy: decisionResult.policy,
@@ -78,16 +149,6 @@ export function createDecisionRoutes(decisionEngine = defaultDecisionEngine) {
           },
         });
       }
-
-      return res.status(200).json({
-        success: true,
-        data: {
-          action: decisionResult.action,
-          risk: decisionResult.risk,
-          policy: decisionResult.policy,
-          audit: auditEvent,
-        },
-      });
     } catch (auditErr) {
       // Security principle: FAIL CLOSED on unexpected audit event errors
       return res.status(500).json({
@@ -98,6 +159,32 @@ export function createDecisionRoutes(decisionEngine = defaultDecisionEngine) {
         },
       });
     }
+
+    // 6. Persist Audit Event (if persistence is configured)
+    if (resolvedAuditEventRepo) {
+      try {
+        await resolvedAuditEventRepo.createAuditEvent(auditEvent);
+      } catch (auditPersistErr) {
+        return res.status(500).json({
+          success: false,
+          error: {
+            code: "AUDIT_PERSISTENCE_FAILED",
+            message: "Failed to persist audit event",
+          },
+        });
+      }
+    }
+
+    // 7. Return successful governance response
+    return res.status(200).json({
+      success: true,
+      data: {
+        action: decisionResult.action,
+        risk: decisionResult.risk,
+        policy: decisionResult.policy,
+        audit: auditEvent,
+      },
+    });
   });
 
   return router;

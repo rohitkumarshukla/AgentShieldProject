@@ -1,9 +1,7 @@
 import app from "./app.js";
+import { config } from "./config/env.js";
 
-// PORT is resolved from environment variables, falling back to 3000 for standard local development.
-const PORT = process.env.PORT || 3000;
-
-// Start the HTTP listener
-app.listen(PORT, () => {
-  console.log(`AgentShield backend is listening on http://localhost:${PORT}`);
+// Start the HTTP listener using centralized configuration
+app.listen(config.port, () => {
+  console.log(`AgentShield backend is listening on http://localhost:${config.port}`);
 });
