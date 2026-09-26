@@ -363,3 +363,433 @@ test("TEST 15 (Task 8): Audit policy consistency — audit policy reflects exact
     assert.equal(body.data.audit.policy.requiresHumanApproval, false);
   });
 });
+
+// Helper for testing custom route dependency injection
+import express from "express";
+import { createDecisionRoutes } from "./decisionRoutes.js";
+import { createMockSupabaseClient } from "../repositories/mockSupabaseClient.js";
+
+async function withCustomRouter(options, fn) {
+  const customApp = express();
+  customApp.use(express.json());
+  customApp.use("/api/v1", createDecisionRoutes(options));
+  const server = http.createServer(customApp);
+  await new Promise((resolve) => server.listen(0, resolve));
+  const port = server.address().port;
+  const baseUrl = `http://localhost:${port}`;
+  try {
+    await fn(baseUrl);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test("TEST 16 (Tasks 15 & 16): When Supabase client is configured, Action, Decision, and Audit repositories persist data", async () => {
+  const mockClient = createMockSupabaseClient({ data: { id: "persisted-id" } });
+
+  await withCustomRouter({ supabaseClient: mockClient }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "agent-persisted",
+        actionType: "read",
+        target: "db.customers",
+        description: "Read customer directory",
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+    assert.ok(body.data.action);
+    assert.ok(body.data.risk);
+    assert.ok(body.data.policy);
+    assert.ok(body.data.audit);
+
+    // Verify mock client calls for all 3 tables
+    assert.equal(mockClient.calls.tables.includes("actions"), true);
+    assert.equal(mockClient.calls.tables.includes("decisions"), true);
+    assert.equal(mockClient.calls.tables.includes("audit_events"), true);
+
+    // Verify action payload inserted
+    const actionInsert = mockClient.calls.inserts.find((ins) => ins.agent_id === "agent-persisted");
+    assert.ok(actionInsert);
+    assert.equal(actionInsert.action_type, "read");
+    assert.equal(actionInsert.target, "db.customers");
+
+    // Verify decision payload inserted
+    const decisionInsert = mockClient.calls.inserts.find((ins) => ins.action_id === body.data.action.id);
+    assert.ok(decisionInsert);
+    assert.equal(decisionInsert.policy_decision, "ALLOW");
+    assert.equal(decisionInsert.policy_code, "standard_risk_allow");
+    assert.equal("decision" in decisionInsert, false);
+    assert.equal("reason" in decisionInsert, false);
+
+    // Verify audit event payload inserted
+    const auditInsert = mockClient.calls.inserts.find((ins) => ins.action_id === body.data.action.id && "policy_decision" in ins && "status" in ins);
+    assert.ok(auditInsert);
+    assert.equal(auditInsert.action_id, body.data.action.id);
+    assert.equal(auditInsert.agent_id, "agent-persisted");
+    assert.equal(auditInsert.status, "DECISION_MADE");
+    assert.equal(auditInsert.policy_decision, "ALLOW");
+  });
+});
+
+test("TEST 17 (Task 15): Action persistence failure returns HTTP 500 with code ACTION_PERSISTENCE_FAILED", async () => {
+  const actionRepoFail = {
+    async createAction() {
+      throw new Error("DB write failed on actions table");
+    },
+  };
+  const decisionRepoSpy = {
+    called: false,
+    async createDecision() {
+      this.called = true;
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepoFail, decisionRepository: decisionRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-1",
+          actionType: "read",
+          target: "db",
+          description: "Read test",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "ACTION_PERSISTENCE_FAILED");
+      assert.equal(decisionRepoSpy.called, false, "Decision should not be persisted if action persistence fails");
+    }
+  );
+});
+
+test("TEST 18 (Task 15): Decision persistence failure returns HTTP 500 with code DECISION_PERSISTENCE_FAILED", async () => {
+  const actionRepoSuccess = {
+    called: false,
+    async createAction(a) {
+      this.called = true;
+      return a;
+    },
+  };
+  const decisionRepoFail = {
+    async createDecision() {
+      throw new Error("DB write failed on decisions table");
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepoSuccess, decisionRepository: decisionRepoFail },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-1",
+          actionType: "read",
+          target: "db",
+          description: "Read test",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "DECISION_PERSISTENCE_FAILED");
+      assert.equal(actionRepoSuccess.called, true, "Action was persisted before decision persistence failed");
+    }
+  );
+});
+
+test("TEST 19 (Task 15): No persistence occurs before action validation succeeds", async () => {
+  const mockClient = createMockSupabaseClient({ data: { id: "ok" } });
+
+  await withCustomRouter({ supabaseClient: mockClient }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // Invalid action - missing agentId and description
+        actionType: "invalid_type",
+      }),
+    });
+
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.equal(body.error.code, "INVALID_ACTION");
+    assert.equal(mockClient.calls.inserts.length, 0, "No database inserts should happen on invalid action");
+  });
+});
+
+test("TEST 20 (Task 15): No decision or action persistence occurs if DecisionEngine throws", async () => {
+  const mockClient = createMockSupabaseClient({ data: { id: "ok" } });
+  const failingEngine = {
+    evaluate() {
+      throw new Error("Engine unexpected failure");
+    },
+  };
+
+  await withCustomRouter({ decisionEngine: failingEngine, supabaseClient: mockClient }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "agent-valid",
+        actionType: "read",
+        target: "db",
+        description: "Valid action payload",
+      }),
+    });
+
+    assert.equal(response.status, 500);
+    const body = await response.json();
+    assert.equal(body.error.code, "DECISION_EVALUATION_FAILED");
+    assert.equal(mockClient.calls.inserts.length, 0, "No inserts should occur if evaluation fails");
+  });
+});
+
+test("TEST 21 (Task 16): Audit persistence failure returns HTTP 500 with code AUDIT_PERSISTENCE_FAILED", async () => {
+  const actionRepo = { async createAction(a) { return a; } };
+  const decisionRepo = { async createDecision(d) { return d; } };
+  const auditRepoFail = {
+    async createAuditEvent() {
+      throw new Error("DB connection terminated during audit_events insert");
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepo, decisionRepository: decisionRepo, auditEventRepository: auditRepoFail },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-audit-fail",
+          actionType: "read",
+          target: "kb",
+          description: "Test audit persistence failure",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "AUDIT_PERSISTENCE_FAILED");
+      assert.equal(body.error.message, "Failed to persist audit event");
+    }
+  );
+});
+
+test("TEST 22 (Task 16): Persistence order verification — action, then decision, then audit", async () => {
+  const executionOrder = [];
+
+  const actionRepo = {
+    async createAction(a) {
+      executionOrder.push("ACTION_PERSISTED");
+      return a;
+    },
+  };
+  const decisionRepo = {
+    async createDecision(d) {
+      executionOrder.push("DECISION_PERSISTED");
+      return d;
+    },
+  };
+  const auditRepo = {
+    async createAuditEvent(ev) {
+      executionOrder.push("AUDIT_PERSISTED");
+      return ev;
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepo, decisionRepository: decisionRepo, auditEventRepository: auditRepo },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-order-test",
+          actionType: "read",
+          target: "kb",
+          description: "Order verification",
+        }),
+      });
+
+      assert.equal(response.status, 200);
+      assert.deepEqual(executionOrder, [
+        "ACTION_PERSISTED",
+        "DECISION_PERSISTED",
+        "AUDIT_PERSISTED",
+      ]);
+    }
+  );
+});
+
+test("TEST 23 (Task 16): If Action persistence fails, audit persistence does not occur", async () => {
+  const actionRepoFail = {
+    async createAction() {
+      throw new Error("Action write failure");
+    },
+  };
+  const auditRepoSpy = {
+    called: false,
+    async createAuditEvent() {
+      this.called = true;
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepoFail, auditEventRepository: auditRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-test",
+          actionType: "read",
+          target: "kb",
+          description: "Action fail cascade test",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.error.code, "ACTION_PERSISTENCE_FAILED");
+      assert.equal(auditRepoSpy.called, false);
+    }
+  );
+});
+
+test("TEST 24 (Task 16): If Decision persistence fails, audit persistence does not occur", async () => {
+  const actionRepo = { async createAction(a) { return a; } };
+  const decisionRepoFail = {
+    async createDecision() {
+      throw new Error("Decision write failure");
+    },
+  };
+  const auditRepoSpy = {
+    called: false,
+    async createAuditEvent() {
+      this.called = true;
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepo, decisionRepository: decisionRepoFail, auditEventRepository: auditRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-test",
+          actionType: "read",
+          target: "kb",
+          description: "Decision fail cascade test",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.error.code, "DECISION_PERSISTENCE_FAILED");
+      assert.equal(auditRepoSpy.called, false);
+    }
+  );
+});
+
+test("TEST 25 (Task 16): Audit repository receives the exact audit event object with all security fields", async () => {
+  let receivedAuditEvent;
+  const actionRepo = { async createAction(a) { return a; } };
+  const decisionRepo = { async createDecision(d) { return d; } };
+  const auditRepo = {
+    async createAuditEvent(ev) {
+      receivedAuditEvent = ev;
+      return ev;
+    },
+  };
+
+  await withCustomRouter(
+    { actionRepository: actionRepo, decisionRepository: decisionRepo, auditEventRepository: auditRepo },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-audit-inspector",
+          actionType: "read",
+          target: "kb.articles",
+          description: "Inspect audit payload",
+        }),
+      });
+
+      assert.equal(response.status, 200);
+      const body = await response.json();
+
+      assert.ok(receivedAuditEvent);
+      assert.equal(receivedAuditEvent.actionId, body.data.action.id);
+      assert.equal(receivedAuditEvent.agentId, "agent-audit-inspector");
+      assert.equal(receivedAuditEvent.target, "kb.articles");
+      assert.equal(receivedAuditEvent.status, "DECISION_MADE");
+      assert.equal(receivedAuditEvent.policy.decision, "ALLOW");
+      assert.equal(receivedAuditEvent.risk.level, "LOW");
+    }
+  );
+});
+
+test("TEST 26 (Task 17 Hardening): Audit creation/validation failure prevents audit persistence", async () => {
+  const actionRepo = { async createAction(a) { return a; } };
+  const decisionRepo = { async createDecision(d) { return d; } };
+  const auditRepoSpy = {
+    called: false,
+    async createAuditEvent() {
+      this.called = true;
+    },
+  };
+
+  // Mock engine that produces an invalid policy output causing audit validation to fail
+  const faultyEngine = {
+    evaluate(action) {
+      return {
+        action,
+        risk: { score: 10, level: "LOW", factors: [] },
+        policy: {
+          decision: "INVALID_POLICY_DECISION",
+          policyCode: "test",
+          reason: "test",
+          requiresHumanApproval: false,
+        },
+      };
+    },
+  };
+
+  await withCustomRouter(
+    { decisionEngine: faultyEngine, actionRepository: actionRepo, decisionRepository: decisionRepo, auditEventRepository: auditRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "agent-faulty",
+          actionType: "read",
+          target: "kb",
+          description: "Trigger audit validation error",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.error.code, "AUDIT_EVENT_CREATION_FAILED");
+      assert.equal(auditRepoSpy.called, false, "Audit persistence must not be called when audit creation/validation fails");
+    }
+  );
+});
+
+
