@@ -94,17 +94,7 @@ export function createAgentRoutes(options = {}) {
         description: normalized.description,
         status: normalized.status,
         environment: normalized.environment,
-        metadata: {
-          ...normalized.metadata,
-          api_key_prefix: apiKeyPrefix,
-          permissions: {
-            allowedTools: ["*"],
-            blockedOperations: [],
-            environmentRestrictions: ["development", "staging", "production"],
-            maxFinancialLimit: null,
-            requiresApprovalThreshold: 60,
-          },
-        },
+        metadata: normalized.metadata,
         api_key_hash: apiKeyHash,
       });
 
@@ -313,6 +303,7 @@ export function createAgentRoutes(options = {}) {
       const deleted = await agentRepository.deleteAgent(id.trim());
       return res.status(200).json({
         success: true,
+        message: "Agent deleted successfully",
         data: {
           deleted: Boolean(deleted),
           id: id.trim(),
@@ -484,13 +475,24 @@ export function createAgentRoutes(options = {}) {
 
       const { apiKey, apiKeyPrefix, apiKeyHash } = generateAgentApiKey();
 
-      const updatedMetadata = {
-        ...(existing.metadata || {}),
-        api_key_prefix: apiKeyPrefix,
+      const keyPayload = {
+        apiKeyHash,
+        apiKeyPrefix,
         key_rotated_at: new Date().toISOString(),
       };
 
-      await agentRepository.updateApiKey(id.trim(), apiKeyHash, updatedMetadata);
+      const updatedMetadata = {
+        ...(existing.metadata || {}),
+        api_key_prefix: apiKeyPrefix,
+        key_rotated_at: keyPayload.key_rotated_at,
+      };
+
+      // Support repositories taking keyPayload object or (apiKeyHash, updatedMetadata)
+      if (agentRepository.updateApiKey.length >= 3) {
+        await agentRepository.updateApiKey(id.trim(), apiKeyHash, updatedMetadata);
+      } else {
+        await agentRepository.updateApiKey(id.trim(), keyPayload);
+      }
 
       return res.status(200).json({
         success: true,

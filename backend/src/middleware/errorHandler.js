@@ -1,10 +1,10 @@
-import { ApiError } from "../utils/ApiError.js";
+import { logRequestError } from "./requestErrorLogger.js";
 
 /**
  * Express error-handling middleware.
  *
- * Catches malformed JSON, payload size errors, ApiError throws, and unexpected crashes.
- * Always logs crash location to the server console so you can see where it failed.
+ * Catches malformed JSON, payload size errors, and unexpected crashes.
+ * Always logs safe request/error metadata using logRequestError.
  */
 export function errorHandler(err, req, res, next) {
   if (res.headersSent) return next(err);
@@ -40,39 +40,12 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
-  const apiError =
-    err instanceof ApiError
-      ? err
-      : ApiError.from(err, 500, "INTERNAL_SERVER_ERROR", "An unexpected error occurred");
-
-  const where = ApiError.formatLocation(apiError.location);
-  const isServerFault = (apiError.statusCode || 500) >= 500;
-
-  if (isServerFault) {
-    console.error(
-      `[AgentShield] ${apiError.code} (${apiError.statusCode}) at ${where}: ${apiError.message}`,
-    );
-    if (apiError.cause?.stack) {
-      console.error(apiError.cause.stack);
-    } else if (apiError.stack) {
-      console.error(apiError.stack);
-    }
-  } else {
-    console.warn(
-      `[AgentShield] ${apiError.code} (${apiError.statusCode}) at ${where}: ${apiError.message}`,
-    );
-  }
-
-  const includeLocation =
-    process.env.NODE_ENV !== "production" && apiError.location != null;
-
-  return res.status(apiError.statusCode || 500).json({
+  logRequestError(req, err);
+  return res.status(500).json({
     success: false,
     error: {
-      code: apiError.code || "INTERNAL_SERVER_ERROR",
-      message: apiError.message || "An unexpected error occurred",
-      ...(includeLocation ? { location: apiError.location } : {}),
-      ...(apiError.errors?.length ? { details: apiError.errors } : {}),
+      code: "INTERNAL_SERVER_ERROR",
+      message: "An unexpected error occurred",
     },
   });
 }
