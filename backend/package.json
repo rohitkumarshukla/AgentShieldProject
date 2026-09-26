@@ -1,0 +1,15 @@
+{
+  "name": "agentshield-backend",
+  "version": "1.0.0",
+  "description": "AgentShield runtime governance backend in plain JavaScript",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}
