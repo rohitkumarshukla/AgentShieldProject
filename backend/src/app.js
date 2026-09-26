@@ -7,6 +7,7 @@ import actionRoutes from "./routes/actionRoutes.js";
 import decisionHistoryRoutes from "./routes/decisionHistoryRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
 import toolRoutes from "./routes/toolRoutes.js";
+import approvalRoutes from "./routes/approvalRoutes.js";
 
 // The Express application instance is separated from server listening logic
 // so it can be imported cleanly by integration tests without opening network ports.
@@ -39,6 +40,7 @@ app.get("/", (req, res) => {
       actions: "/api/v1/actions",
       auditEvents: "/api/v1/audit-events",
       tools: "/api/v1/tools",
+      approvals: "/api/v1/approvals",
     },
     timestamp: new Date().toISOString(),
   });
@@ -61,6 +63,7 @@ app.use("/api/v1", actionRoutes);
 app.use("/api/v1", decisionHistoryRoutes);
 app.use("/api/v1", auditRoutes);
 app.use("/api/v1", toolRoutes);
+app.use("/api/v1", approvalRoutes);
 
 // Catch-all 404 — forward through ApiError so the shared handler logs location
 app.use(notFoundHandler);
