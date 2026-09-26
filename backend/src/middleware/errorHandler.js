@@ -3,8 +3,8 @@ import { logRequestError } from "./requestErrorLogger.js";
 /**
  * Express error-handling middleware.
  *
- * Catches malformed JSON payloads and unexpected errors, returning
- * structured JSON responses without leaking internal stack traces.
+ * Catches malformed JSON, payload size errors, and unexpected crashes.
+ * Always logs safe request/error metadata using logRequestError.
  */
 export function errorHandler(err, req, res, next) {
   if (res.headersSent) return next(err);

@@ -157,4 +157,22 @@ describe("AgentRepository", () => {
     await assert.rejects(() => repo.updateAgent("agent-1", { name: "Updated" }), /Failed to update agent: internal detail/);
     await assert.rejects(() => repo.updateApiKeyHash("agent-1", "hash"), /Failed to update agent API key: internal detail/);
   });
+
+  it("getAgentByApiKeyHash retrieves agent by API key hash or returns null if not found", async () => {
+    const mockRecord = { id: "agent-123", name: "CRMAgent", api_key_hash: "hash123" };
+    const foundClient = createMockSupabaseClient({ data: mockRecord });
+    const repoFound = createAgentRepository(foundClient);
+
+    const found = await repoFound.getAgentByApiKeyHash("hash123");
+    assert.deepEqual(found, mockRecord);
+    assert.deepEqual(foundClient.calls.eqFilters[0], { column: "api_key_hash", value: "hash123" });
+
+    // Not found case
+    const notFoundClient = createMockSupabaseClient({
+      error: { message: "JSON object requested, multiple (or no) rows returned", code: "PGRST116" },
+    });
+    const repoNotFound = createAgentRepository(notFoundClient);
+    const notFound = await repoNotFound.getAgentByApiKeyHash("unknown-hash");
+    assert.equal(notFound, null);
+  });
 });

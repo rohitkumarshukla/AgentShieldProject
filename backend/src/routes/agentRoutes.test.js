@@ -334,7 +334,7 @@ test(
 );
 
 test(
-  "GET /api/v1/agents/:id: unknown UUID returns HTTP 404 with NOT_FOUND",
+  "GET /api/v1/agents/:id: unknown UUID returns HTTP 404 with AGENT_NOT_FOUND",
   async () => {
     const fakeRepo = {
       async getAgentById() {
@@ -354,7 +354,7 @@ test(
       const body = await res.json();
 
       assert.equal(body.success, false);
-      assert.equal(body.error.code, "NOT_FOUND");
+      assert.equal(body.error.code, "AGENT_NOT_FOUND");
       assert.match(body.error.message, /not found/);
     });
   }
@@ -622,3 +622,200 @@ test(
     });
   }
 );
+
+// -----------------------------------------------------------------------------
+// PATCH / PUT /api/v1/agents/:id (Update)
+// -----------------------------------------------------------------------------
+
+test("PATCH /api/v1/agents/:id: updates an agent successfully", async () => {
+  const existingAgent = {
+    id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    name: "Original Name",
+    status: "active",
+    environment: "development",
+  };
+
+  const fakeRepo = {
+    async getAgentById(id) {
+      return id === existingAgent.id ? existingAgent : null;
+    },
+    async updateAgent(id, updates) {
+      return { ...existingAgent, ...updates };
+    },
+  };
+
+  await withCustomServer({ agentRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/agents/${existingAgent.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Updated Name", status: "inactive" }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.agent.name, "Updated Name");
+    assert.equal(body.data.agent.status, "inactive");
+  });
+});
+
+test("PATCH /api/v1/agents/:id: returns 404 if agent does not exist", async () => {
+  const fakeRepo = {
+    async getAgentById() {
+      return null;
+    },
+  };
+
+  await withCustomServer({ agentRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/agents/3fa85f64-5717-4562-b3fc-2c963f66afa6`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "New Name" }),
+    });
+
+    assert.equal(res.status, 404);
+    const body = await res.json();
+    assert.equal(body.error.code, "AGENT_NOT_FOUND");
+  });
+});
+
+// -----------------------------------------------------------------------------
+// DELETE /api/v1/agents/:id (Delete)
+// -----------------------------------------------------------------------------
+
+test("DELETE /api/v1/agents/:id: deletes an agent successfully", async () => {
+  const existingAgent = {
+    id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    name: "Agent To Delete",
+    status: "active",
+  };
+
+  const fakeRepo = {
+    async getAgentById(id) {
+      return id === existingAgent.id ? existingAgent : null;
+    },
+    async deleteAgent() {
+      return existingAgent;
+    },
+  };
+
+  await withCustomServer({ agentRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/agents/${existingAgent.id}`, {
+      method: "DELETE",
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.match(body.message, /deleted successfully/);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Permissions: GET & PUT /api/v1/agents/:id/permissions
+// -----------------------------------------------------------------------------
+
+test("GET /api/v1/agents/:id/permissions: retrieves default or custom permissions", async () => {
+  const agent = {
+    id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    name: "Permissions Agent",
+    environment: "production",
+    status: "active",
+    metadata: {
+      permissions: {
+        allowedTools: ["customer_crm", "email_sender"],
+        blockedOperations: ["bulk_delete"],
+        maxFinancialLimit: 10000,
+        requiresApprovalThreshold: 70,
+        environmentRestrictions: ["production"],
+      },
+    },
+  };
+
+  const fakeRepo = {
+    async getAgentById(id) {
+      return id === agent.id ? agent : null;
+    },
+  };
+
+  await withCustomServer({ agentRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/agents/${agent.id}/permissions`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.deepEqual(body.data.permissions.allowedTools, ["customer_crm", "email_sender"]);
+    assert.equal(body.data.permissions.maxFinancialLimit, 10000);
+  });
+});
+
+test("PUT /api/v1/agents/:id/permissions: updates permissions successfully", async () => {
+  const agent = {
+    id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    name: "Permissions Agent",
+    metadata: {},
+  };
+
+  let savedMetadata = null;
+  const fakeRepo = {
+    async getAgentById(id) {
+      return id === agent.id ? agent : null;
+    },
+    async updateAgent(id, updates) {
+      savedMetadata = updates.metadata;
+      return { ...agent, ...updates };
+    },
+  };
+
+  await withCustomServer({ agentRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/agents/${agent.id}/permissions`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        allowedTools: ["slack_notifier", "jira_creator"],
+        requiresApprovalThreshold: 80,
+      }),
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.deepEqual(body.data.permissions.allowedTools, ["slack_notifier", "jira_creator"]);
+    assert.equal(body.data.permissions.requiresApprovalThreshold, 80);
+    assert.ok(savedMetadata.permissions);
+  });
+});
+
+// -----------------------------------------------------------------------------
+// Key Rotation: POST /api/v1/agents/:id/rotate-key
+// -----------------------------------------------------------------------------
+
+test("POST /api/v1/agents/:id/rotate-key: rotates key and returns plaintext key once", async () => {
+  const agent = {
+    id: "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+    name: "Key Rotate Agent",
+  };
+
+  let capturedKeyData = null;
+  const fakeRepo = {
+    async getAgentById(id) {
+      return id === agent.id ? agent : null;
+    },
+    async updateApiKey(id, keyData) {
+      capturedKeyData = keyData;
+      return { ...agent, api_key_prefix: keyData.apiKeyPrefix };
+    },
+  };
+
+  await withCustomServer({ agentRepository: fakeRepo }, async (baseUrl) => {
+    const res = await fetch(`${baseUrl}/api/v1/agents/${agent.id}/rotate-key`, {
+      method: "POST",
+    });
+
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.success, true);
+    assert.match(body.data.apiKey, /^ash_live_/);
+    assert.ok(capturedKeyData.apiKeyHash);
+    assert.ok(capturedKeyData.apiKeyPrefix);
+  });
+});
