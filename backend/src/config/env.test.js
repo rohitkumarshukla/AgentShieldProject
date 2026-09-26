@@ -30,7 +30,7 @@ test("TEST 3: Invalid PORT such as 'abc' fails clearly", () => {
     () => parseConfig({ PORT: "abc" }),
     {
       name: "Error",
-      message: /Invalid PORT configuration: "abc"/,
+      message: /Invalid PORT configuration/,
     },
   );
 
@@ -48,7 +48,7 @@ test("TEST 4: Out-of-range PORT such as '0' fails clearly", () => {
     () => parseConfig({ PORT: "0" }),
     {
       name: "Error",
-      message: /Out-of-range PORT configuration: 0/,
+      message: /Out-of-range PORT configuration/,
     },
   );
 });
@@ -58,7 +58,7 @@ test("TEST 5: Out-of-range PORT such as '65536' fails clearly", () => {
     () => parseConfig({ PORT: "65536" }),
     {
       name: "Error",
-      message: /Out-of-range PORT configuration: 65536/,
+      message: /Out-of-range PORT configuration/,
     },
   );
 });
@@ -68,7 +68,7 @@ test("TEST 6: Invalid NODE_ENV fails clearly", () => {
     () => parseConfig({ NODE_ENV: "staging_invalid" }),
     {
       name: "Error",
-      message: /Invalid NODE_ENV configuration: "staging_invalid"/,
+      message: /Invalid NODE_ENV configuration/,
     },
   );
 });
@@ -95,6 +95,13 @@ test("TEST 9 (Task 12): Valid SUPABASE_URL + SUPABASE_ANON_KEY -> parsed correct
 });
 
 test("TEST 10 (Task 12): Invalid SUPABASE_URL -> clear configuration error", () => {
+  const secretLikeUrl = "private-url-token";
+  assert.throws(() => parseConfig({ SUPABASE_URL: secretLikeUrl }), (error) => {
+    assert.match(error.message, /Invalid SUPABASE_URL configuration/);
+    assert.equal(error.message.includes(secretLikeUrl), false);
+    return true;
+  });
+
   assert.throws(
     () => parseConfig({ SUPABASE_URL: "not-a-valid-url" }),
     {

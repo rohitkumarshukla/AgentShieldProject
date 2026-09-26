@@ -20,7 +20,7 @@ export function parseConfig(env = process.env) {
     const rawPort = String(env.PORT).trim();
     // Verify pure integer string
     if (!/^\d+$/.test(rawPort)) {
-      throw new Error(`Invalid PORT configuration: "${env.PORT}". Must be an integer between 1 and 65535.`);
+      throw new Error("Invalid PORT configuration. Must be an integer between 1 and 65535.");
     }
 
     const parsedPort = Number(rawPort);
@@ -36,7 +36,7 @@ export function parseConfig(env = process.env) {
     const rawEnv = String(env.NODE_ENV).trim();
     if (!VALID_NODE_ENVS.has(rawEnv)) {
       throw new Error(
-        `Invalid NODE_ENV configuration: "${env.NODE_ENV}". Must be one of: ${Array.from(VALID_NODE_ENVS).join(", ")}.`,
+        `Invalid NODE_ENV configuration. Must be one of: ${Array.from(VALID_NODE_ENVS).join(", ")}.`,
       );
     }
     nodeEnv = rawEnv;
@@ -53,7 +53,7 @@ export function parseConfig(env = process.env) {
       }
       supabaseUrl = parsedUrl.href;
     } catch {
-      throw new Error(`Invalid SUPABASE_URL configuration: "${env.SUPABASE_URL}". Must be a valid HTTP or HTTPS URL.`);
+      throw new Error("Invalid SUPABASE_URL configuration. Must be a valid HTTP or HTTPS URL.");
     }
   }
 

@@ -1,4 +1,6 @@
 import express from "express";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { logRequestError } from "../middleware/requestErrorLogger.js";
 import { createAuditEvent } from "../audit/auditEvent.js";
 import { validateAuditEvent } from "../audit/auditEventValidator.js";
 import { DecisionEngine } from "../decision/decisionEngine.js";
@@ -53,7 +55,7 @@ export function createDecisionRoutes(options = {}) {
 
   const router = express.Router();
 
-  router.post("/decisions", async (req, res, next) => {
+  router.post("/decisions", asyncHandler(async (req, res) => {
     let decisionResult;
     let action;
 
@@ -91,6 +93,7 @@ export function createDecisionRoutes(options = {}) {
       decisionResult = decisionEngine.evaluate(action);
     } catch (err) {
       // Security principle: FAIL CLOSED on unexpected engine exceptions
+      logRequestError(req, err, { code: "DECISION_EVALUATION_FAILED" });
       return res.status(500).json({
         success: false,
         error: {
@@ -105,6 +108,7 @@ export function createDecisionRoutes(options = {}) {
       try {
         await resolvedActionRepo.createAction(action);
       } catch (persistErr) {
+        logRequestError(req, persistErr, { code: "ACTION_PERSISTENCE_FAILED" });
         return res.status(500).json({
           success: false,
           error: {
@@ -120,6 +124,7 @@ export function createDecisionRoutes(options = {}) {
       try {
         await resolvedDecisionRepo.createDecision(decisionResult);
       } catch (persistErr) {
+        logRequestError(req, persistErr, { code: "DECISION_PERSISTENCE_FAILED" });
         return res.status(500).json({
           success: false,
           error: {
@@ -141,6 +146,7 @@ export function createDecisionRoutes(options = {}) {
 
       const auditValidation = validateAuditEvent(auditEvent);
       if (!auditValidation.valid) {
+        logRequestError(req, new Error("Audit event validation failed"), { code: "AUDIT_EVENT_CREATION_FAILED" });
         return res.status(500).json({
           success: false,
           error: {
@@ -149,22 +155,24 @@ export function createDecisionRoutes(options = {}) {
           },
         });
       }
-    } catch (auditErr) {
-      // Security principle: FAIL CLOSED on unexpected audit event errors
-      return res.status(500).json({
-        success: false,
-        error: {
-          code: "AUDIT_EVENT_CREATION_FAILED",
-          message: "Unable to create audit event",
-        },
-      });
-    }
+      } catch (auditErr) {
+        // Security principle: FAIL CLOSED on unexpected audit event errors
+        logRequestError(req, auditErr, { code: "AUDIT_EVENT_CREATION_FAILED" });
+        return res.status(500).json({
+          success: false,
+          error: {
+            code: "AUDIT_EVENT_CREATION_FAILED",
+            message: "Unable to create audit event",
+          },
+        });
+      }
 
     // 6. Persist Audit Event (if persistence is configured)
     if (resolvedAuditEventRepo) {
       try {
         await resolvedAuditEventRepo.createAuditEvent(auditEvent);
       } catch (auditPersistErr) {
+        logRequestError(req, auditPersistErr, { code: "AUDIT_PERSISTENCE_FAILED" });
         return res.status(500).json({
           success: false,
           error: {
@@ -185,7 +193,7 @@ export function createDecisionRoutes(options = {}) {
         audit: auditEvent,
       },
     });
-  });
+  }));
 
   return router;
 }

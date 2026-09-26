@@ -1,4 +1,6 @@
 import express from "express";
+import { asyncHandler } from "../middleware/asyncHandler.js";
+import { logRequestError } from "../middleware/requestErrorLogger.js";
 import { supabase as defaultSupabaseClient } from "../lib/supabase.js";
 import { createAgentRepository } from "../repositories/agentRepository.js";
 import { AgentServiceError, createAgentService } from "../services/agentService.js";
@@ -8,7 +10,7 @@ export function createAgentRoutes(options = {}) {
   const service = options.agentService || (repository ? createAgentService(repository, options.cryptoOptions) : null);
   const router = express.Router();
 
-  const handle = (handler) => async (req, res) => {
+  const handle = (handler) => asyncHandler(async (req, res) => {
     try {
       if (!service) throw new Error("Agent persistence is unavailable");
       const result = await handler(req);
@@ -16,12 +18,13 @@ export function createAgentRoutes(options = {}) {
     } catch (error) {
       const known = error instanceof AgentServiceError;
       const status = known ? error.statusCode : 500;
+      if (!known) logRequestError(req, error, { status, code: "AGENT_REGISTRY_FAILED" });
       return res.status(status).json({ success: false, error: {
         code: known ? error.code : "AGENT_REGISTRY_FAILED",
         message: known ? error.message : "Unable to complete agent registry request",
       } });
     }
-  };
+  });
 
   router.post("/agents", handle(async (req) => ({ status: 201, data: await service.create(req.body) })));
   router.get("/agents", handle(async () => ({ data: { agents: await service.list() } })));
