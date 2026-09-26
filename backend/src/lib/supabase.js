@@ -49,3 +49,39 @@ export function getSupabaseClient(cfg = config) {
  * Will be null when SUPABASE_URL or SUPABASE_ANON_KEY are not configured.
  */
 export const supabase = createSupabaseClient(config);
+
+/**
+ * Safely verifies whether the Supabase configuration is present and valid.
+ * Confirms that credentials are configured and that the client can be initialized.
+ * Does NOT expose secret key or URL values, and does not make unnecessary table queries.
+ *
+ * @param {{ supabaseUrl?: string | null, supabaseAnonKey?: string | null }} [cfg=config]
+ * @returns {{ configured: boolean, clientInitialized: boolean, status: string }}
+ */
+export function verifySupabaseConfiguration(cfg = config) {
+  const configured = isSupabaseConfigured(cfg);
+  if (!configured) {
+    return {
+      configured: false,
+      clientInitialized: false,
+      status: "UNCONFIGURED",
+    };
+  }
+
+  try {
+    const client = createSupabaseClient(cfg);
+    const clientInitialized = Boolean(client && typeof client.from === "function");
+    return {
+      configured: true,
+      clientInitialized,
+      status: clientInitialized ? "INITIALIZED" : "FAILED",
+    };
+  } catch {
+    return {
+      configured: true,
+      clientInitialized: false,
+      status: "FAILED",
+    };
+  }
+}
+

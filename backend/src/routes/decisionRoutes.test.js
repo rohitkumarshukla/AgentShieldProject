@@ -2,11 +2,27 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import test from "node:test";
 
-import app from "../app.js";
+import express from "express";
+import { createDecisionRoutes } from "./decisionRoutes.js";
+import { errorHandler } from "../middleware/errorHandler.js";
 
-// Helper to run ephemeral HTTP server for integration tests without hardcoding ports
+// Helper to run ephemeral HTTP server for integration tests in isolated offline mode
 async function withServer(fn) {
-  const server = http.createServer(app);
+  const testApp = express();
+  testApp.use(express.json());
+  testApp.use("/api/v1", createDecisionRoutes({ supabaseClient: null }));
+  testApp.use((req, res) => {
+    res.status(404).json({
+      success: false,
+      error: {
+        code: "NOT_FOUND",
+        message: `Route ${req.method} ${req.originalUrl} not found`,
+      },
+    });
+  });
+  testApp.use(errorHandler);
+
+  const server = http.createServer(testApp);
   await new Promise((resolve) => server.listen(0, resolve));
   const port = server.address().port;
   const baseUrl = `http://localhost:${port}`;
@@ -16,6 +32,7 @@ async function withServer(fn) {
     await new Promise((resolve) => server.close(resolve));
   }
 }
+
 
 test("TEST 1: LOW-risk action -> HTTP 200, success === true, standard_risk_allow", async () => {
   await withServer(async (baseUrl) => {
@@ -365,14 +382,17 @@ test("TEST 15 (Task 8): Audit policy consistency — audit policy reflects exact
 });
 
 // Helper for testing custom route dependency injection
-import express from "express";
-import { createDecisionRoutes } from "./decisionRoutes.js";
 import { createMockSupabaseClient } from "../repositories/mockSupabaseClient.js";
 
-async function withCustomRouter(options, fn) {
+async function withCustomRouter(options = {}, fn) {
+
   const customApp = express();
   customApp.use(express.json());
-  customApp.use("/api/v1", createDecisionRoutes(options));
+  const resolvedOptions = {
+    supabaseClient: null,
+    ...options,
+  };
+  customApp.use("/api/v1", createDecisionRoutes(resolvedOptions));
   const server = http.createServer(customApp);
   await new Promise((resolve) => server.listen(0, resolve));
   const port = server.address().port;
@@ -384,15 +404,17 @@ async function withCustomRouter(options, fn) {
   }
 }
 
+
 test("TEST 16 (Tasks 15 & 16): When Supabase client is configured, Action, Decision, and Audit repositories persist data", async () => {
-  const mockClient = createMockSupabaseClient({ data: { id: "persisted-id" } });
+  const validAgentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const mockClient = createMockSupabaseClient({ data: { id: "persisted-id", status: "active" } });
 
   await withCustomRouter({ supabaseClient: mockClient }, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/v1/decisions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        agentId: "agent-persisted",
+        agentId: validAgentId,
         actionType: "read",
         target: "db.customers",
         description: "Read customer directory",
@@ -413,7 +435,7 @@ test("TEST 16 (Tasks 15 & 16): When Supabase client is configured, Action, Decis
     assert.equal(mockClient.calls.tables.includes("audit_events"), true);
 
     // Verify action payload inserted
-    const actionInsert = mockClient.calls.inserts.find((ins) => ins.agent_id === "agent-persisted");
+    const actionInsert = mockClient.calls.inserts.find((ins) => ins.agent_id === validAgentId);
     assert.ok(actionInsert);
     assert.equal(actionInsert.action_type, "read");
     assert.equal(actionInsert.target, "db.customers");
@@ -430,7 +452,7 @@ test("TEST 16 (Tasks 15 & 16): When Supabase client is configured, Action, Decis
     const auditInsert = mockClient.calls.inserts.find((ins) => ins.action_id === body.data.action.id && "policy_decision" in ins && "status" in ins);
     assert.ok(auditInsert);
     assert.equal(auditInsert.action_id, body.data.action.id);
-    assert.equal(auditInsert.agent_id, "agent-persisted");
+    assert.equal(auditInsert.agent_id, validAgentId);
     assert.equal(auditInsert.status, "DECISION_MADE");
     assert.equal(auditInsert.policy_decision, "ALLOW");
   });
@@ -530,7 +552,8 @@ test("TEST 19 (Task 15): No persistence occurs before action validation succeeds
 });
 
 test("TEST 20 (Task 15): No decision or action persistence occurs if DecisionEngine throws", async () => {
-  const mockClient = createMockSupabaseClient({ data: { id: "ok" } });
+  const validAgentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const mockClient = createMockSupabaseClient({ data: { id: validAgentId, status: "active" } });
   const failingEngine = {
     evaluate() {
       throw new Error("Engine unexpected failure");
@@ -542,7 +565,7 @@ test("TEST 20 (Task 15): No decision or action persistence occurs if DecisionEng
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        agentId: "agent-valid",
+        agentId: validAgentId,
         actionType: "read",
         target: "db",
         description: "Valid action payload",
@@ -791,5 +814,236 @@ test("TEST 26 (Task 17 Hardening): Audit creation/validation failure prevents au
     }
   );
 });
+
+// -----------------------------------------------------------------------------
+// Task 23: Agent Context & Action-to-Agent Validation
+// -----------------------------------------------------------------------------
+
+test("TEST 27 (Task 23): Valid registered active agent allows decision flow to proceed and persist", async () => {
+  const validAgentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const agentRepo = {
+    async getAgentById(id) {
+      if (id === validAgentId) {
+        return { id: validAgentId, status: "active", name: "Active Agent" };
+      }
+      return null;
+    },
+  };
+  const actionRepo = {
+    called: false,
+    async createAction(a) {
+      this.called = true;
+      return a;
+    },
+  };
+
+  await withCustomRouter({ agentRepository: agentRepo, actionRepository: actionRepo }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: validAgentId,
+        actionType: "read",
+        target: "db.records",
+        description: "Read records by active agent",
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.action.agentId, validAgentId);
+    assert.equal(actionRepo.called, true, "Action was persisted for valid active agent");
+  });
+});
+
+test("TEST 28 (Task 23): Invalid agent UUID returns HTTP 400 INVALID_AGENT_ID and halts pipeline", async () => {
+  const engineSpy = {
+    called: false,
+    evaluate() {
+      this.called = true;
+    },
+  };
+  const agentRepoSpy = {
+    called: false,
+    async getAgentById() {
+      this.called = true;
+    },
+  };
+
+  await withCustomRouter(
+    { decisionEngine: engineSpy, agentRepository: agentRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: "not-a-valid-uuid",
+          actionType: "read",
+          target: "db.records",
+          description: "Read records with bad UUID",
+        }),
+      });
+
+      assert.equal(response.status, 400);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "INVALID_AGENT_ID");
+      assert.equal(engineSpy.called, false, "Decision engine must not be called");
+      assert.equal(agentRepoSpy.called, false, "Database lookup must not be attempted before UUID validation");
+    }
+  );
+});
+
+test("TEST 29 (Task 23): Unknown agent returns HTTP 404 AGENT_NOT_FOUND and does not evaluate or persist", async () => {
+  const unknownUuid = "00000000-0000-0000-0000-000000000000";
+  const engineSpy = {
+    called: false,
+    evaluate() {
+      this.called = true;
+    },
+  };
+  const actionRepoSpy = {
+    called: false,
+    async createAction() {
+      this.called = true;
+    },
+  };
+  const agentRepo = {
+    async getAgentById() {
+      return null;
+    },
+  };
+
+  await withCustomRouter(
+    { decisionEngine: engineSpy, agentRepository: agentRepo, actionRepository: actionRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: unknownUuid,
+          actionType: "read",
+          target: "db.records",
+          description: "Read records by non-existent agent",
+        }),
+      });
+
+      assert.equal(response.status, 404);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "AGENT_NOT_FOUND");
+      assert.equal(engineSpy.called, false, "Decision engine must not run for unknown agent");
+      assert.equal(actionRepoSpy.called, false, "Action must not be persisted for unknown agent");
+    }
+  );
+});
+
+test("TEST 30 (Task 23): Inactive agent returns HTTP 403 AGENT_INACTIVE and halts pipeline", async () => {
+  const inactiveAgentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const engineSpy = {
+    called: false,
+    evaluate() {
+      this.called = true;
+    },
+  };
+  const actionRepoSpy = {
+    called: false,
+    async createAction() {
+      this.called = true;
+    },
+  };
+  const agentRepo = {
+    async getAgentById(id) {
+      if (id === inactiveAgentId) {
+        return { id: inactiveAgentId, status: "inactive", name: "Disabled Agent" };
+      }
+      return null;
+    },
+  };
+
+  await withCustomRouter(
+    { decisionEngine: engineSpy, agentRepository: agentRepo, actionRepository: actionRepoSpy },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: inactiveAgentId,
+          actionType: "read",
+          target: "db.records",
+          description: "Read records by inactive agent",
+        }),
+      });
+
+      assert.equal(response.status, 403);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "AGENT_INACTIVE");
+      assert.equal(engineSpy.called, false, "Decision engine must not run for inactive agent");
+      assert.equal(actionRepoSpy.called, false, "Action must not be persisted for inactive agent");
+    }
+  );
+});
+
+test("TEST 31 (Task 23): Agent repository failure returns HTTP 500 without running decision engine", async () => {
+  const validAgentId = "3fa85f64-5717-4562-b3fc-2c963f66afa6";
+  const engineSpy = {
+    called: false,
+    evaluate() {
+      this.called = true;
+    },
+  };
+  const agentRepoFail = {
+    async getAgentById() {
+      throw new Error("PostgreSQL connection failure");
+    },
+  };
+
+  await withCustomRouter(
+    { decisionEngine: engineSpy, agentRepository: agentRepoFail },
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agentId: validAgentId,
+          actionType: "read",
+          target: "db.records",
+          description: "Read records during DB failure",
+        }),
+      });
+
+      assert.equal(response.status, 500);
+      const body = await response.json();
+      assert.equal(body.success, false);
+      assert.equal(body.error.code, "AGENT_VERIFICATION_FAILED");
+      assert.equal(engineSpy.called, false, "Decision engine must not run if agent verification fails");
+    }
+  );
+});
+
+test("TEST 32 (Task 23): Offline mode works without requiring Supabase or agent lookup", async () => {
+  await withCustomRouter({ supabaseClient: null }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        agentId: "arbitrary-string-id",
+        actionType: "read",
+        target: "docs",
+        description: "Offline evaluation",
+        environment: "development",
+      }),
+    });
+
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(body.success, true);
+    assert.equal(body.data.policy.decision, "ALLOW");
+  });
+});
+
+
 
 
