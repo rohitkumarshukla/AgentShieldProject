@@ -121,36 +121,18 @@ export function createAuditEventRepository(supabaseClient) {
       }
 
       const row = toAuditEventRow(auditEvent);
-      const rowId = row.id || auditEvent.id || crypto.randomUUID();
-      row.id = rowId;
 
-      const memoryRecord = {
-        ...row,
-        id: rowId,
-        risk: auditEvent.risk || { score: row.risk_score, level: row.risk_level },
-        policy: auditEvent.policy || { decision: row.policy_decision, policyCode: row.policy_code },
-      };
+      const response = await supabaseClient
+        .from("audit_events")
+        .insert(row)
+        .select()
+        .single();
 
-      try {
-        const response = await supabaseClient
-          .from("audit_events")
-          .insert(row)
-          .select()
-          .single();
-
-        if (response.error) {
-          memoryStore.set(rowId, memoryRecord);
-          return memoryRecord;
-        }
-
-        const created = handleDbResponse(response, "Failed to create audit event");
-        const saved = created || memoryRecord;
-        memoryStore.set(rowId, saved);
-        return saved;
-      } catch (_err) {
-        memoryStore.set(rowId, memoryRecord);
-        return memoryRecord;
+      const created = handleDbResponse(response, "Failed to create audit event");
+      if (created?.id) {
+        memoryStore.set(created.id, created);
       }
+      return created;
     },
 
     /**

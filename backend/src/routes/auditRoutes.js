@@ -183,7 +183,7 @@ export function createAuditRoutes(options = {}) {
         success: false,
         error: {
           code: err.code || "AUDIT_EVENT_RETRIEVAL_FAILED",
-          message: err.message || "Failed to retrieve audit event record",
+          message: statusCode === 500 ? "Failed to retrieve audit event record" : (err.message || "Failed to retrieve audit event record"),
         },
       });
     }
