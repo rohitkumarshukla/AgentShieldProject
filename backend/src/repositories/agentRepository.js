@@ -61,11 +61,26 @@ export function createAgentRepository(supabaseClient) {
 
       const row = toAgentRow(agent);
 
-      const response = await supabaseClient
+      let response = await supabaseClient
         .from("agents")
         .insert(row)
         .select()
         .single();
+
+      if (response?.error?.code === "PGRST204" && (row.api_key_hash !== undefined || row.api_key_prefix !== undefined)) {
+        const metadata = typeof row.metadata === "object" && row.metadata !== null ? { ...row.metadata } : {};
+        if (row.api_key_hash) metadata.apiKeyHash = row.api_key_hash;
+        if (row.api_key_prefix) metadata.apiKeyPrefix = row.api_key_prefix;
+        const fallbackRow = { ...row, metadata };
+        delete fallbackRow.api_key_hash;
+        delete fallbackRow.api_key_prefix;
+
+        response = await supabaseClient
+          .from("agents")
+          .insert(fallbackRow)
+          .select()
+          .single();
+      }
 
       return handleDbResponse(response, "Failed to create agent");
     },
@@ -101,11 +116,22 @@ export function createAgentRepository(supabaseClient) {
         throw new Error("Failed to get agent: valid apiKeyHash is required");
       }
 
-      const response = await supabaseClient
+      let response = await supabaseClient
         .from("agents")
         .select()
         .eq("api_key_hash", apiKeyHash)
         .single();
+
+      if (response?.error?.code === "PGRST204" || (response?.error && !response?.data)) {
+        const metaResponse = await supabaseClient
+          .from("agents")
+          .select()
+          .eq("metadata->>apiKeyHash", apiKeyHash)
+          .single();
+        if (metaResponse?.data || (!response?.data && metaResponse?.error?.code !== "PGRST204")) {
+          response = metaResponse;
+        }
+      }
 
       return handleDbResponse(response, "Failed to get agent by API key hash");
     },

@@ -332,9 +332,11 @@ export class SecurityInterceptor {
       ? parameters.count
       : (typeof parameters.recipientCount === "number"
         ? parameters.recipientCount
-        : (Array.isArray(parameters.customerIds)
-          ? parameters.customerIds.length
-          : (Array.isArray(parameters.recipients) ? parameters.recipients.length : 1)));
+        : (typeof parameters.batchSize === "number"
+          ? parameters.batchSize
+          : (Array.isArray(parameters.customerIds)
+            ? parameters.customerIds.length
+            : (Array.isArray(parameters.recipients) ? parameters.recipients.length : 1))));
 
     const financialImpact = typeof parameters.amount === "number"
       ? parameters.amount
