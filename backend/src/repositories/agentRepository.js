@@ -13,6 +13,7 @@ export function toAgentRow(agent = {}) {
   if (agent.id !== undefined) row.id = agent.id;
   if (agent.name !== undefined) row.name = agent.name;
   if (agent.description !== undefined) row.description = agent.description;
+  if (agent.api_key_hash !== undefined) row.api_key_hash = agent.api_key_hash;
   if (agent.status !== undefined) row.status = agent.status;
   if (agent.environment !== undefined) row.environment = agent.environment;
   
@@ -114,6 +115,19 @@ export function createAgentRepository(supabaseClient) {
       const response = await query;
       const data = handleDbResponse(response, "Failed to list agents");
       return Array.isArray(data) ? data : [];
+    },
+
+    async updateAgent(id, updates) {
+      if (!id || typeof id !== "string") throw new Error("Failed to update agent: valid id is required");
+      const response = await supabaseClient.from("agents").update(toAgentRow(updates)).eq("id", id).select().single();
+      return handleDbResponse(response, "Failed to update agent");
+    },
+
+    async updateApiKeyHash(id, apiKeyHash) {
+      if (!id || typeof id !== "string") throw new Error("Failed to update agent API key: valid id is required");
+      if (typeof apiKeyHash !== "string" || !apiKeyHash) throw new Error("Failed to update agent API key: hash is required");
+      const response = await supabaseClient.from("agents").update({ api_key_hash: apiKeyHash }).eq("id", id).select().single();
+      return handleDbResponse(response, "Failed to update agent API key");
     },
   };
 }

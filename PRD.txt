@@ -1,0 +1,68 @@
+# AgentShield Product Requirements
+
+## Product Summary
+
+AgentShield is a security and governance layer between AI agents and the tools they can invoke. It intercepts proposed tool calls before execution, evaluates them using deterministic risk rules and policy, and routes each action to allow, human approval, or block. The agent may propose an action but must not authorize itself.
+
+**Product promise:** Give AI agents useful capabilities without giving them unchecked authority.
+
+## Problem
+
+Autonomous agents can affect customer records, communications, financial workflows, sensitive data, and infrastructure. Tool permissions alone do not explain or constrain each individual action. Teams need a decision point that evaluates the proposed action before it reaches the downstream tool and records why the decision was made.
+
+## Goals
+
+- Make the interception boundary and final decision immediately understandable.
+- Show explainable, deterministic risk factors and the policy matched for each action.
+- Support three outcomes: allow, require human approval, or block.
+- Record proposed actions, decisions, approvals, and execution outcomes in an auditable event trail.
+- Track whether an action is reversible, partially reversible, or irreversible; do not promise universal rollback.
+- Demonstrate the contrast between a blocked destructive action, an approval-gated action, and a low-risk action that proceeds.
+
+## Primary Workflow
+
+1. An agent submits a structured tool action with its identity, tool, operation, and parameters.
+2. AgentShield intercepts the action before downstream execution.
+3. The risk engine calculates a score from the action and its factors; the policy engine evaluates applicable rules.
+4. AgentShield allows the action, pauses for an authorized human decision, or blocks execution.
+5. The system records the decision and relevant execution or approval result in the audit trail.
+
+The language model may help interpret a request, but it cannot set the risk score or final authorization decision.
+
+## Decision Bands
+
+- **Low (0-29):** eligible for automatic allow under policy.
+- **Medium (30-59):** policy determines whether to allow or request approval.
+- **High (60-79):** require approval.
+- **Critical (80-100):** block or require elevated approval according to policy; destructive actions should be blocked by the matching rule.
+
+Policy always participates in the decision; a score alone is not authorization.
+
+## Demonstration Scenarios
+
+1. **Block:** `deleteCustomers(147)` scores 100, matches `bulk_delete_guard`, is blocked before execution, and records that zero customers were deleted.
+2. **Approval:** `sendEmails(38)` scores 58, waits for an authorized reviewer, then records the approval or denial and resulting execution state.
+3. **Auto-allow:** `knowledgeBase.read(12)` scores 12, matches `internal_read_allow`, and proceeds without unnecessary human friction.
+
+The interface should let a presenter inspect the risk explanation, matched policy, decision path, approval state, and corresponding audit event.
+
+## Core Product Areas
+
+- **Operations dashboard:** system posture and recent agent actions.
+- **Live actions and approvals:** pending decisions, action details, and clear approve/deny controls.
+- **Risk engine and policies:** explainable score factors, risk bands, policy conditions, and outcomes.
+- **Protected agents:** agent identity, permitted tools, activity, risk configuration, and pause control.
+- **Audit log:** searchable and filterable decision and execution history.
+- **Recovery center:** recovery metadata and honest reversibility classifications.
+- **Decision graph and demo mode:** visualize the request-to-decision path and present the three scenarios.
+- **Threat protection:** show controls for prompt injection, tool misuse, excessive permissions, sensitive exports, credential abuse, and cascading failures.
+
+## Audit and Recovery Requirements
+
+Audit events should capture the timestamp, agent, proposed action and tool, risk score, matched policy, decision, approver when applicable, execution result, and reversibility. Approval and execution transitions should update the event history. Recovery features must distinguish restoring captured state from compensating for an action; irreversible actions require prevention before execution.
+
+## Technical Honesty and Scope
+
+The prototype should communicate an enterprise security control-plane direction while clearly distinguishing working MVP behavior from planned integrations. MCP may be presented as architecture-ready, but not as an implemented gateway. Do not claim universal rollback, guaranteed protection, or production integrations that are not present.
+
+The embedded design brief in `FrontEnd/src/imports/pasted_text/agent-shield-spec.md` is the detailed source for presentation requirements and visual direction. This PRD summarizes its core product behavior.

@@ -6,7 +6,6 @@ import {
   normalizeCreateAgentInput,
   isValidUuid,
 } from "../domain/agentValidator.js";
-
 import { validatePaginationMiddleware } from "../middleware/pagination.js";
 
 /**
@@ -22,8 +21,14 @@ import { validatePaginationMiddleware } from "../middleware/pagination.js";
  * @returns {express.Router}
  */
 export function createAgentRoutes(options = {}) {
-  const supabaseClient = options.supabaseClient !== undefined ? options.supabaseClient : defaultSupabaseClient;
-  const agentRepository = options.agentRepository || (supabaseClient ? createAgentRepository(supabaseClient) : null);
+  const supabaseClient =
+    options.supabaseClient !== undefined
+      ? options.supabaseClient
+      : defaultSupabaseClient;
+
+  const agentRepository =
+    options.agentRepository ||
+    (supabaseClient ? createAgentRepository(supabaseClient) : null);
 
   const router = express.Router();
 
@@ -41,6 +46,7 @@ export function createAgentRoutes(options = {}) {
         },
       });
     }
+
     next();
   }
 
@@ -51,6 +57,7 @@ export function createAgentRoutes(options = {}) {
     const body = req.body;
 
     const validation = validateCreateAgentInput(body);
+
     if (!validation.valid) {
       return res.status(400).json({
         success: false,
@@ -64,7 +71,8 @@ export function createAgentRoutes(options = {}) {
     const normalizedInput = normalizeCreateAgentInput(body);
 
     try {
-      const createdRecord = await agentRepository.createAgent(normalizedInput);
+      const createdRecord =
+        await agentRepository.createAgent(normalizedInput);
 
       return res.status(201).json({
         success: true,
@@ -86,36 +94,46 @@ export function createAgentRoutes(options = {}) {
   // ---------------------------------------------------------------------------
   // GET /api/v1/agents — List all registered agents (paginated)
   // ---------------------------------------------------------------------------
-  router.get("/agents", requireRepository, validatePaginationMiddleware, async (req, res) => {
-    const { page, limit } = req.pagination;
+  router.get(
+    "/agents",
+    requireRepository,
+    validatePaginationMiddleware,
+    async (req, res) => {
+      const { page, limit } = req.pagination;
 
-    try {
-      const result = await agentRepository.listAgents({ page, limit });
+      try {
+        const result = await agentRepository.listAgents({ page, limit });
 
-      const agents = Array.isArray(result) ? result : (result.items || []);
-      const hasMore = Array.isArray(result) ? false : Boolean(result.hasMore);
+        const agents = Array.isArray(result)
+          ? result
+          : result.items || [];
 
-      return res.status(200).json({
-        success: true,
-        data: {
-          agents,
-          pagination: {
-            page,
-            limit,
-            hasMore,
+        const hasMore = Array.isArray(result)
+          ? false
+          : Boolean(result.hasMore);
+
+        return res.status(200).json({
+          success: true,
+          data: {
+            agents,
+            pagination: {
+              page,
+              limit,
+              hasMore,
+            },
           },
-        },
-      });
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        error: {
-          code: "AGENT_LIST_FAILED",
-          message: "Failed to retrieve agent records",
-        },
-      });
+        });
+      } catch (err) {
+        return res.status(500).json({
+          success: false,
+          error: {
+            code: "AGENT_LIST_FAILED",
+            message: "Failed to retrieve agent records",
+          },
+        });
+      }
     }
-  });
+  );
 
   // ---------------------------------------------------------------------------
   // GET /api/v1/agents/:id — Retrieve an agent by ID

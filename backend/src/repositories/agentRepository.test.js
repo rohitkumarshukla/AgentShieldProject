@@ -140,4 +140,21 @@ describe("AgentRepository", () => {
       /Failed to list agents: table does not exist/
     );
   });
+
+  it("updates an agent and replaces its API key hash", async () => {
+    const client = createMockSupabaseClient({ data: { id: "agent-1", name: "Updated", api_key_hash: "new-hash" } });
+    const repo = createAgentRepository(client);
+    const updated = await repo.updateAgent("agent-1", { name: "Updated", updated_at: "now" });
+    assert.equal(updated.name, "Updated");
+    assert.deepEqual(client.calls.updates[0], { name: "Updated", updated_at: "now" });
+    const keyUpdated = await repo.updateApiKeyHash("agent-1", "new-hash");
+    assert.equal(keyUpdated.api_key_hash, "new-hash");
+    assert.deepEqual(client.calls.updates[1], { api_key_hash: "new-hash" });
+  });
+
+  it("surfaces repository update failures for route-level sanitization", async () => {
+    const repo = createAgentRepository(createMockSupabaseClient({ error: { code: "XX000", message: "internal detail" } }));
+    await assert.rejects(() => repo.updateAgent("agent-1", { name: "Updated" }), /Failed to update agent: internal detail/);
+    await assert.rejects(() => repo.updateApiKeyHash("agent-1", "hash"), /Failed to update agent API key: internal detail/);
+  });
 });
