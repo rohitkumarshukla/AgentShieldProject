@@ -1,6 +1,7 @@
 import express from "express";
 import { errorHandler } from "./middleware/errorHandler.js";
 import decisionRoutes from "./routes/decisionRoutes.js";
+import agentRoutes from "./routes/agentRoutes.js";
 
 // The Express application instance is separated from server listening logic
 // so it can be imported cleanly by integration tests without opening network ports.
@@ -21,6 +22,7 @@ app.get("/health", (req, res) => {
 
 // Mount AgentShield v1 API routes
 app.use("/api/v1", decisionRoutes);
+app.use("/api/v1", agentRoutes);
 
 // Catch-all 404 handler for unknown routes
 app.use((req, res) => {

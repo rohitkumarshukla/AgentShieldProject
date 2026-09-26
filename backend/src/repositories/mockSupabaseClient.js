@@ -11,6 +11,7 @@ export function createMockSupabaseClient({ data = null, error = null } = {}) {
   const calls = {
     tables: [],
     inserts: [],
+    updates: [],
     selects: [],
     eqFilters: [],
     singleCalls: 0,
@@ -24,6 +25,10 @@ export function createMockSupabaseClient({ data = null, error = null } = {}) {
       const queryBuilder = {
         insert(payload) {
           calls.inserts.push(payload);
+          return queryBuilder;
+        },
+        update(payload) {
+          calls.updates.push(payload);
           return queryBuilder;
         },
         select(columns) {
