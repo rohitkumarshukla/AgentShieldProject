@@ -1,0 +1,40 @@
+# AgentShield Technology Stack
+
+This document distinguishes dependencies present in the repository from technologies named as future product direction. Package versions below are the ranges declared in the manifests.
+
+## Implemented in This Repository
+
+### Frontend
+
+- **React** `^19.0.0` and **React DOM** `^19.0.0`
+- **TypeScript** `^5.7.0`
+- **Vite** `^8.0.5` with `@vitejs/plugin-react` `^6.0.0`
+- **Tailwind CSS** `^4.0.0` with `@tailwindcss/vite` `^4.0.0`
+- **oxfmt** `^0.2.0` for formatting
+
+The frontend is a Vite application under `FrontEnd/`. Its available scripts are `dev`, `build`, `preview`, and `format`.
+
+### Backend
+
+- **Node.js**, using JavaScript ES modules
+- **Express** `^4.21.2`
+- **Node.js built-in test runner** (`node --test`)
+
+The backend package is under `backend/`; its entry point is `backend/src/server.js`. Its scripts are `dev`, `start`, and `test`.
+
+## Not Currently Configured
+
+The current package manifests do not include a database client or ORM, Socket.IO, an authentication/JWT package, an LLM SDK, React Flow, or an MCP gateway. The product brief describes some of these as desired architecture or roadmap items; they should not be represented as implemented integrations without corresponding code and dependencies.
+
+## Product Architecture Direction
+
+The product brief proposes PostgreSQL with Prisma for persistence, Socket.IO for real-time updates, JWT authentication, structured LLM outputs/tool calling for intent extraction, and React Flow for graph visualization. These remain proposed components unless added to the application.
+
+## Common Commands
+
+```powershell
+npm --prefix FrontEnd run dev
+npm --prefix FrontEnd run build
+npm --prefix backend run dev
+npm --prefix backend test
+```
