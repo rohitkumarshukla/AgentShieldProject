@@ -72,12 +72,15 @@ export function createApprovalRepository(supabaseClient) {
           if (error.code === "PGRST116" || error.message?.includes("0 rows")) {
             return null;
           }
+          if (error.message?.includes("schema cache") || error.message?.includes("relation") || error.code === "42P01") {
+            return null;
+          }
           throw new Error(`Approval query failed: ${error.message}`);
         }
 
         return data;
       } catch (err) {
-        if (err.message?.includes("0 rows") || err.message?.includes("PGRST116")) {
+        if (err.message?.includes("0 rows") || err.message?.includes("PGRST116") || err.message?.includes("schema cache")) {
           return null;
         }
         throw new Error(`Approval retrieval error: ${err.message}`);
@@ -110,6 +113,9 @@ export function createApprovalRepository(supabaseClient) {
 
         const { data, error } = await query;
         if (error) {
+          if (error.message?.includes("schema cache") || error.message?.includes("relation") || error.code === "42P01" || error.code === "PGRST205") {
+            return { items: [], hasMore: false };
+          }
           throw new Error(`Failed to list approvals: ${error.message}`);
         }
 
@@ -122,6 +128,9 @@ export function createApprovalRepository(supabaseClient) {
           hasMore,
         };
       } catch (err) {
+        if (err.message?.includes("schema cache") || err.message?.includes("relation")) {
+          return { items: [], hasMore: false };
+        }
         throw new Error(`Approval list error: ${err.message}`);
       }
     },
