@@ -28,9 +28,9 @@ export function extractBearerToken(req) {
  * @param {import("@supabase/supabase-js").SupabaseClient | null} [options.supabaseClient]
  * @returns {import("express").RequestHandler}
  */
-export function createUserAuthMiddleware({ supabaseClient = null } = {}) {
+export function createUserAuthMiddleware(options = {}) {
   return async function userAuthMiddleware(req, res, next) {
-    const client = supabaseClient || getSupabaseClient();
+    const client = options.supabaseClient !== undefined ? options.supabaseClient : getSupabaseClient();
 
     // Verify Supabase client configuration
     if (!client) {

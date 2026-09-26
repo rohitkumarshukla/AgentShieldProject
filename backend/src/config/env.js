@@ -90,11 +90,21 @@ export function parseConfig(env = process.env) {
     supabaseAnonKey = rawKey;
   }
 
+  // 5. Resolve and validate SUPABASE_SERVICE_ROLE_KEY (optional)
+  let supabaseServiceRoleKey = null;
+  if (env.SUPABASE_SERVICE_ROLE_KEY !== undefined && env.SUPABASE_SERVICE_ROLE_KEY !== "") {
+    const rawKey = String(env.SUPABASE_SERVICE_ROLE_KEY).trim();
+    if (rawKey.length > 0) {
+      supabaseServiceRoleKey = rawKey;
+    }
+  }
+
   return Object.freeze({
     port,
     nodeEnv,
     supabaseUrl,
     supabaseAnonKey,
+    supabaseServiceRoleKey,
   });
 }
 

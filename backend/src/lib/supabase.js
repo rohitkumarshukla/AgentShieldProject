@@ -12,11 +12,12 @@ import { config } from "../config/env.js";
  * @returns {import("@supabase/supabase-js").SupabaseClient | null}
  */
 export function createSupabaseClient(cfg = config) {
-  if (!cfg.supabaseUrl || !cfg.supabaseAnonKey) {
+  const key = cfg.supabaseServiceRoleKey || cfg.supabaseAnonKey;
+  if (!cfg.supabaseUrl || !key) {
     return null;
   }
 
-  return createClient(cfg.supabaseUrl, cfg.supabaseAnonKey, {
+  return createClient(cfg.supabaseUrl, key, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,

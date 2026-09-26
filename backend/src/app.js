@@ -1,11 +1,12 @@
 import express from "express";
-import { ApiError } from "./utils/ApiError.js";
+import { notFoundHandler } from "./middleware/notFound.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import decisionRoutes from "./routes/decisionRoutes.js";
 import agentRoutes from "./routes/agentRoutes.js";
 import actionRoutes from "./routes/actionRoutes.js";
 import decisionHistoryRoutes from "./routes/decisionHistoryRoutes.js";
 import auditRoutes from "./routes/auditRoutes.js";
+import toolRoutes from "./routes/toolRoutes.js";
 
 // The Express application instance is separated from server listening logic
 // so it can be imported cleanly by integration tests without opening network ports.
@@ -13,6 +14,35 @@ const app = express();
 
 // Standard middleware to parse incoming JSON payloads into req.body
 app.use(express.json());
+
+// Enable Cross-Origin Resource Sharing (CORS) for frontend clients
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, x-api-key, x-agent-api-key");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(204);
+  }
+  next();
+});
+
+// Root endpoint for browser visits and API welcome info
+app.get("/", (req, res) => {
+  res.status(200).json({
+    status: "online",
+    service: "AgentShield Backend API",
+    version: "1.0.0",
+    endpoints: {
+      health: "/health",
+      decisions: "/api/v1/decisions",
+      agents: "/api/v1/agents",
+      actions: "/api/v1/actions",
+      auditEvents: "/api/v1/audit-events",
+      tools: "/api/v1/tools",
+    },
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // Health check endpoint provides a lightweight liveness check for monitoring
 // and local verification without side effects.
@@ -30,17 +60,10 @@ app.use("/api/v1", agentRoutes);
 app.use("/api/v1", actionRoutes);
 app.use("/api/v1", decisionHistoryRoutes);
 app.use("/api/v1", auditRoutes);
+app.use("/api/v1", toolRoutes);
 
 // Catch-all 404 — forward through ApiError so the shared handler logs location
-app.use((req, res, next) => {
-  next(
-    new ApiError(
-      404,
-      `Route ${req.method} ${req.originalUrl} not found`,
-      "NOT_FOUND",
-    ),
-  );
-});
+app.use(notFoundHandler);
 
 // Error handling middleware for malformed JSON and unexpected server errors
 app.use(errorHandler);

@@ -68,9 +68,10 @@ export function extractApiKey(req) {
  * @param {Object} [options.agentRepository]
  * @returns {import("express").RequestHandler}
  */
-export function createAgentAuthMiddleware({ supabaseClient = null, agentRepository = null } = {}) {
+export function createAgentAuthMiddleware(options = {}) {
   return async function agentAuthMiddleware(req, res, next) {
-    const client = supabaseClient || getSupabaseClient();
+    const client = options.supabaseClient !== undefined ? options.supabaseClient : getSupabaseClient();
+    const agentRepository = options.agentRepository !== undefined ? options.agentRepository : null;
 
     // Verify Supabase client / DB connectivity
     if (!client && !agentRepository) {

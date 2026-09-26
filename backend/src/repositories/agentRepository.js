@@ -185,5 +185,55 @@ export function createAgentRepository(supabaseClient) {
         .single();
       return handleDbResponse(response, "Failed to update agent API key");
     },
+
+    /**
+     * Updates both the API key hash and key prefix for an agent.
+     *
+     * @param {string} id
+     * @param {Object} keyData
+     * @param {string} keyData.apiKeyHash
+     * @param {string} [keyData.apiKeyPrefix]
+     * @returns {Promise<Object>}
+     */
+    async updateApiKey(id, { apiKeyHash, apiKeyPrefix = null }) {
+      if (!id || typeof id !== "string") {
+        throw new Error("Failed to update agent API key: valid id is required");
+      }
+      if (typeof apiKeyHash !== "string" || !apiKeyHash) {
+        throw new Error("Failed to update agent API key: hash is required");
+      }
+      const updates = { api_key_hash: apiKeyHash };
+      if (apiKeyPrefix !== undefined) {
+        updates.api_key_prefix = apiKeyPrefix;
+      }
+      updates.updated_at = new Date().toISOString();
+
+      const response = await supabaseClient
+        .from("agents")
+        .update(updates)
+        .eq("id", id)
+        .select()
+        .single();
+      return handleDbResponse(response, "Failed to update agent API key");
+    },
+
+    /**
+     * Deletes an agent record from the database.
+     *
+     * @param {string} id
+     * @returns {Promise<Object|null>} Deleted record
+     */
+    async deleteAgent(id) {
+      if (!id || typeof id !== "string") {
+        throw new Error("Failed to delete agent: valid id is required");
+      }
+      const response = await supabaseClient
+        .from("agents")
+        .delete()
+        .eq("id", id)
+        .select()
+        .single();
+      return handleDbResponse(response, "Failed to delete agent");
+    },
   };
 }
