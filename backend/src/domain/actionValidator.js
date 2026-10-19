@@ -1,136 +1,94 @@
-const SUPPORTED_ACTION_TYPES = new Set([
-  "read",
-  "write",
-  "delete",
-  "send",
-  "execute",
-  "export",
-]);
-
-const SUPPORTED_SCOPE_TYPES = new Set([
-  "single",
-  "bulk",
-  "all",
-]);
-
-const SUPPORTED_DESTINATION_TYPES = new Set([
-  "internal",
-  "external",
-  "none",
-]);
-
-const SUPPORTED_ENVIRONMENTS = new Set([
+/**
+ * Allowed environments for an action execution.
+ */
+export const ALLOWED_ENVIRONMENTS = Object.freeze([
   "development",
   "staging",
   "production",
 ]);
 
-const SUPPORTED_SENSITIVITY_LEVELS = new Set([
-  "public",
-  "internal",
-  "sensitive",
-  "restricted",
-]);
-
 /**
- * Validates an action object deterministically against AgentShield domain rules.
+ * Validates an incoming action payload.
  *
- * Does not throw exceptions; instead returns structured success/failure details
- * so the caller can handle invalid actions safely without try/catch overhead.
+ * Rules:
+ * - input: must be a plain object (not null, not an array, not a primitive).
+ * - agentId: required, non-empty string.
+ * - toolId: required, non-empty string.
+ * - operation: required, non-empty string.
+ * - parameters: optional plain object (defaults to {} if omitted).
+ * - environment: optional string restricted to 'development', 'staging', or 'production' (defaults to 'development').
+ * - userPrompt: optional string (defaults to '' if omitted).
  *
- * @param {unknown} action - The action object to validate
+ * This function does not modify the input object.
+ *
+ * @param {unknown} input
  * @returns {{ valid: boolean, errors: string[] }}
  */
-export function validateAction(action) {
+export function validateAction(input) {
   const errors = [];
 
-  if (!action || typeof action !== "object" || Array.isArray(action)) {
+  // Verify that the payload is a valid non-null plain object (not an array)
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
     return {
       valid: false,
-      errors: ["Action must be a valid non-null object."],
+      errors: ["Action payload must be a plain object."],
     };
   }
 
-  // agentId: required non-empty string
-  if (typeof action.agentId !== "string" || action.agentId.trim().length === 0) {
-    errors.push("agentId is required and must be a non-empty string.");
+  // 1. Validate agentId (required, non-empty string)
+  if (input.agentId === undefined || input.agentId === null) {
+    errors.push("agentId is required.");
+  } else if (typeof input.agentId !== "string") {
+    errors.push("agentId must be a string.");
+  } else if (input.agentId.trim().length === 0) {
+    errors.push("agentId cannot be empty or whitespace-only.");
   }
 
-  // actionType: must be one of the supported types
-  if (typeof action.actionType !== "string" || !SUPPORTED_ACTION_TYPES.has(action.actionType)) {
-    errors.push(
-      `actionType must be one of: ${Array.from(SUPPORTED_ACTION_TYPES).join(", ")}.`,
-    );
+  // 2. Validate toolId (required, non-empty string)
+  if (input.toolId === undefined || input.toolId === null) {
+    errors.push("toolId is required.");
+  } else if (typeof input.toolId !== "string") {
+    errors.push("toolId must be a string.");
+  } else if (input.toolId.trim().length === 0) {
+    errors.push("toolId cannot be empty or whitespace-only.");
   }
 
-  // target: required non-empty string
-  if (typeof action.target !== "string" || action.target.trim().length === 0) {
-    errors.push("target is required and must be a non-empty string.");
+  // 3. Validate operation (required, non-empty string)
+  if (input.operation === undefined || input.operation === null) {
+    errors.push("operation is required.");
+  } else if (typeof input.operation !== "string") {
+    errors.push("operation must be a string.");
+  } else if (input.operation.trim().length === 0) {
+    errors.push("operation cannot be empty or whitespace-only.");
   }
 
-  // description: required non-empty string
-  if (typeof action.description !== "string" || action.description.trim().length === 0) {
-    errors.push("description is required and must be a non-empty string.");
-  }
-
-  // scope: object with valid type and non-negative count
-  if (!action.scope || typeof action.scope !== "object" || Array.isArray(action.scope)) {
-    errors.push("scope must be an object with 'type' and 'count'.");
-  } else {
-    if (!SUPPORTED_SCOPE_TYPES.has(action.scope.type)) {
-      errors.push(`scope.type must be one of: ${Array.from(SUPPORTED_SCOPE_TYPES).join(", ")}.`);
+  // 4. Validate parameters (optional plain object)
+  if (input.parameters !== undefined) {
+    if (
+      typeof input.parameters !== "object" ||
+      input.parameters === null ||
+      Array.isArray(input.parameters)
+    ) {
+      errors.push("parameters must be a plain object if provided.");
     }
-    if (typeof action.scope.count !== "number" || Number.isNaN(action.scope.count) || action.scope.count < 0) {
-      errors.push("scope.count must be a non-negative number.");
-    }
   }
 
-  // destination: object with valid type and string | null value
-  if (!action.destination || typeof action.destination !== "object" || Array.isArray(action.destination)) {
-    errors.push("destination must be an object with 'type' and optional 'value'.");
-  } else {
-    if (!SUPPORTED_DESTINATION_TYPES.has(action.destination.type)) {
+  // 5. Validate environment (optional string restricted to allowed list)
+  if (input.environment !== undefined) {
+    if (typeof input.environment !== "string") {
+      errors.push("environment must be a string.");
+    } else if (!ALLOWED_ENVIRONMENTS.includes(input.environment)) {
       errors.push(
-        `destination.type must be one of: ${Array.from(SUPPORTED_DESTINATION_TYPES).join(", ")}.`,
+        `environment must be one of: ${ALLOWED_ENVIRONMENTS.join(", ")}.`
       );
     }
-    if (
-      action.destination.value !== null &&
-      action.destination.value !== undefined &&
-      typeof action.destination.value !== "string"
-    ) {
-      errors.push("destination.value must be a string or null.");
+  }
+
+  // 6. Validate userPrompt (optional string)
+  if (input.userPrompt !== undefined) {
+    if (typeof input.userPrompt !== "string") {
+      errors.push("userPrompt must be a string if provided.");
     }
-  }
-
-  // environment: must be one of the supported environments
-  if (typeof action.environment !== "string" || !SUPPORTED_ENVIRONMENTS.has(action.environment)) {
-    errors.push(
-      `environment must be one of: ${Array.from(SUPPORTED_ENVIRONMENTS).join(", ")}.`,
-    );
-  }
-
-  // sensitivity: object with valid level
-  if (!action.sensitivity || typeof action.sensitivity !== "object" || Array.isArray(action.sensitivity)) {
-    errors.push("sensitivity must be an object with 'level'.");
-  } else if (!SUPPORTED_SENSITIVITY_LEVELS.has(action.sensitivity.level)) {
-    errors.push(
-      `sensitivity.level must be one of: ${Array.from(SUPPORTED_SENSITIVITY_LEVELS).join(", ")}.`,
-    );
-  }
-
-  // financialImpact: must be a non-negative number
-  if (
-    typeof action.financialImpact !== "number" ||
-    Number.isNaN(action.financialImpact) ||
-    action.financialImpact < 0
-  ) {
-    errors.push("financialImpact must be a non-negative number.");
-  }
-
-  // metadata: must be an object if present
-  if (!action.metadata || typeof action.metadata !== "object" || Array.isArray(action.metadata)) {
-    errors.push("metadata must be an object.");
   }
 
   return {

@@ -1,80 +1,43 @@
-import { PolicyEngine } from "../policy/policyEngine.js";
-import { RiskEngine } from "../risk/riskEngine.js";
+/**
+ * AgentShield Decision Engine (Step 3)
+ *
+ * Combines risk assessment and policy evaluation to produce an authoritative governance
+ * decision for a proposed action.
+ *
+ * Guarantees:
+ * - Pure and deterministic: Free of database, network, and tool-execution side effects.
+ * - Does not mutate input objects.
+ * - Fails closed on invalid inputs.
+ */
+
+import { calculateRisk } from "../risk/riskEngine.js";
+import { evaluatePolicy, DECISIONS, POLICY_IDS } from "../policy/policyEngine.js";
+
+export { DECISIONS, POLICY_IDS };
 
 /**
- * Deterministic Decision Engine for AgentShield.
+ * Evaluates an action through the AgentShield risk and policy pipeline.
  *
- * Architecture:
- *   Action
- *     ↓
- *   RiskEngine.evaluate(action)
- *     ↓
- *   PolicyEngine.evaluate(action, riskAssessment)
- *     ↓
- *   Combined Decision Result
+ * Pipeline steps:
+ * 1. Calculate deterministic risk score, level, and factors via calculateRisk(action).
+ * 2. Evaluate governance policy rules via evaluatePolicy(action, riskAssessment).
+ * 3. Return combined result with decision, riskAssessment, policyId, and reason.
  *
- * Responsibilities:
- * - Coordinates the evaluation pipeline without duplicating risk or policy logic.
- * - Enforces fail-closed error handling (evaluation failures propagate instead of becoming ALLOW).
- * - Guarantees determinism and preserves input immutability.
+ * @param {object} action - Normalized action object created with createAction().
+ * @returns {{ decision: string, policyId: string, reason: string, riskAssessment: object }}
  */
-export class DecisionEngine {
-  /**
-   * Initializes the DecisionEngine with optional injected engines.
-   *
-   * @param {Object} [dependencies={}]
-   * @param {RiskEngine} [dependencies.riskEngine] - Injected or default RiskEngine instance
-   * @param {PolicyEngine} [dependencies.policyEngine] - Injected or default PolicyEngine instance
-   */
-  constructor({ riskEngine, policyEngine } = {}) {
-    this.riskEngine = riskEngine || new RiskEngine();
-    this.policyEngine = policyEngine || new PolicyEngine();
-  }
+export function evaluateAction(action) {
+  // 1. Calculate risk assessment using the existing risk engine
+  const riskAssessment = calculateRisk(action);
 
-  /**
-   * Evaluates an action through the complete governance pipeline.
-   *
-   * @param {Object} action - The canonical action object to evaluate
-   * @returns {{
-   *   action: Object,
-   *   risk: {
-   *     score: number,
-   *     level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-   *     factors: Array<{ code: string, description: string, points: number }>
-   *   },
-   *   policy: {
-   *     decision: "ALLOW" | "APPROVAL_REQUIRED" | "BLOCK",
-   *     policyCode: string,
-   *     reason: string,
-   *     requiresHumanApproval: boolean
-   *   }
-   * }}
-   */
-  evaluate(action) {
-    if (!action || typeof action !== "object" || Array.isArray(action)) {
-      throw new Error("DecisionEngine.evaluate requires a valid action object");
-    }
+  // 2. Evaluate applicable governance policies
+  const policyResult = evaluatePolicy(action, riskAssessment);
 
-    // 1. Evaluate risk through the RiskEngine
-    const riskAssessment = this.riskEngine.evaluate(action);
-
-    // 2. Evaluate policy through the PolicyEngine
-    const policyResult = this.policyEngine.evaluate(action, riskAssessment);
-
-    // 3. Return combined decision result preserving original action reference
-    return {
-      action,
-      risk: {
-        score: riskAssessment.score,
-        level: riskAssessment.level,
-        factors: riskAssessment.factors,
-      },
-      policy: {
-        decision: policyResult.decision,
-        policyCode: policyResult.policyCode,
-        reason: policyResult.reason,
-        requiresHumanApproval: policyResult.requiresHumanApproval,
-      },
-    };
-  }
+  // 3. Return combined authoritative governance result
+  return {
+    decision: policyResult.decision,
+    policyId: policyResult.policyId,
+    reason: policyResult.reason,
+    riskAssessment,
+  };
 }

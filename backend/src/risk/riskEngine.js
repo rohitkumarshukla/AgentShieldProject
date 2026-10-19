@@ -1,157 +1,140 @@
-import { validateAction } from "../domain/actionValidator.js";
+/**
+ * AgentShield Risk Engine (Step 2B)
+ *
+ * Evaluates normalized actions using deterministic scoring rules and assigns
+ * a risk score (0–100), risk level (LOW, MEDIUM, HIGH, CRITICAL), and a transparent
+ * list of contributing risk factors.
+ */
 
 /**
- * Deterministic, explainable Risk Engine for AgentShield.
- *
- * Architecture:
- *   Action -> RiskEngine.evaluate(action) -> RiskAssessment
- *
- * Responsibilities:
- * - Accepts a canonical Action object.
- * - Validates that the input is a valid action object.
- * - Evaluates individual, independent risk scoring rules.
- * - Accumulates explainable risk factors in strict canonical order.
- * - Computes a clamped risk score (0 - 100) while preserving original factor points.
- * - Deterministically maps the clamped score to a discrete RiskLevel.
- *
- * Note: Contains NO policy decisions (ALLOW, BLOCK, REQUIRE_APPROVAL).
+ * Risk level categories based on score ranges:
+ * - 0–29: LOW
+ * - 30–59: MEDIUM
+ * - 60–79: HIGH
+ * - 80–100: CRITICAL
  */
-export class RiskEngine {
-  /**
-   * Evaluates an action and returns a deterministic RiskAssessment.
-   *
-   * @param {Object} action - The action object to evaluate
-   * @returns {{
-   *   score: number,
-   *   level: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-   *   factors: Array<{ code: string, description: string, points: number }>
-   * }}
-   */
-  evaluate(action) {
-    if (!action || typeof action !== "object" || Array.isArray(action)) {
-      throw new Error("RiskEngine.evaluate requires a valid action object");
-    }
+export const RISK_LEVELS = Object.freeze({
+  LOW: "LOW",
+  MEDIUM: "MEDIUM",
+  HIGH: "HIGH",
+  CRITICAL: "CRITICAL",
+});
 
-    const validation = validateAction(action);
-    if (!validation.valid) {
+/**
+ * Maps a numeric risk score (0–100) to its corresponding risk level category.
+ *
+ * @param {number} score - The capped risk score between 0 and 100.
+ * @returns {string} The risk level ('LOW', 'MEDIUM', 'HIGH', or 'CRITICAL').
+ */
+export function getRiskLevel(score) {
+  if (score >= 80) return RISK_LEVELS.CRITICAL;
+  if (score >= 60) return RISK_LEVELS.HIGH;
+  if (score >= 30) return RISK_LEVELS.MEDIUM;
+  return RISK_LEVELS.LOW;
+}
+
+/**
+ * Calculates a deterministic risk assessment for a normalized action.
+ *
+ * Scoring Rules:
+ * 1. Scope: action.parameters.count contributes min(count, 100) points.
+ *    If count is absent (undefined), contributes 0 points.
+ *    If count is present, it must be a non-negative integer; otherwise throws an Error.
+ * 2. Destructive operation: if action.operation, case-insensitively, contains 'delete', add 80 points.
+ * 3. External destination: if action.parameters.destination is 'external', case-insensitively, add 20 points.
+ * 4. Sensitive data: if action.parameters.dataClassification is 'PII' or 'FINANCIAL', case-insensitively, add 5 points.
+ * 5. Irreversibility: if action.parameters.irreversible === true, add 20 points.
+ *
+ * Capping:
+ * The final sum is capped to a maximum of 100.
+ *
+ * Guarantees:
+ * - Pure function: does not mutate the input or perform any database, network, or tool operations.
+ * - Deterministic: identical actions always return identical assessments.
+ * - Transparent: returned score equals the capped sum of the returned factors.
+ *
+ * @param {object} action - A normalized action object created with createAction().
+ * @returns {{ score: number, level: string, factors: Array<{ name: string, points: number }> }}
+ */
+export function calculateRisk(action) {
+  if (!action || typeof action !== "object" || Array.isArray(action)) {
+    throw new TypeError("Action must be a valid action object.");
+  }
+
+  const factors = [];
+  const params = action.parameters || {};
+
+  // 1. Scope: action.parameters.count contributes min(count, 100) points
+  if (params.count !== undefined) {
+    const count = params.count;
+    if (
+      typeof count !== "number" ||
+      !Number.isInteger(count) ||
+      count < 0
+    ) {
       throw new Error(
-        `RiskEngine.evaluate requires a valid action object: ${validation.errors.join("; ")}`,
+        `Invalid count parameter: count must be a non-negative integer. Received: ${typeof count === "number" ? count : JSON.stringify(count)}`
       );
     }
 
-    const factors = [];
-
-    // 1. DESTRUCTIVE_ACTION
-    // Evaluates whether the action performs a permanent deletion
-    if (action.actionType === "delete") {
+    const scopePoints = Math.min(count, 100);
+    if (scopePoints > 0) {
       factors.push({
-        code: "DESTRUCTIVE_ACTION",
-        description: "Delete action is inherently destructive",
-        points: 50,
+        name: "Scope",
+        points: scopePoints,
       });
     }
-
-    // 2. BULK_SCOPE
-    // Evaluates the scope volume affected, picking only the single highest matching tier
-    const count = typeof action.scope?.count === "number" ? action.scope.count : 0;
-    if (count >= 100) {
-      factors.push({
-        code: "BULK_SCOPE_CRITICAL",
-        description: "Action affects 100 or more resources",
-        points: 55,
-      });
-    } else if (count >= 25) {
-      factors.push({
-        code: "BULK_SCOPE_HIGH",
-        description: "Action affects 25 or more resources",
-        points: 35,
-      });
-    } else if (count >= 10) {
-      factors.push({
-        code: "BULK_SCOPE_MEDIUM",
-        description: "Action affects 10 or more resources",
-        points: 20,
-      });
-    }
-
-    // 3. EXTERNAL_DESTINATION
-    // Evaluates whether data or operations cross outside internal environment boundaries
-    if (action.destination?.type === "external") {
-      factors.push({
-        code: "EXTERNAL_DESTINATION",
-        description: "Action sends data or performs an operation outside the internal environment",
-        points: 20,
-      });
-    }
-
-    // 4. SENSITIVE_DATA
-    // Evaluates whether sensitive or restricted information is targeted
-    const sensitivityLevel = action.sensitivity?.level;
-    if (sensitivityLevel === "sensitive" || sensitivityLevel === "restricted") {
-      factors.push({
-        code: "SENSITIVE_DATA",
-        description: "Action involves sensitive or restricted data",
-        points: 20,
-      });
-    }
-
-    // 5. PRODUCTION_ENVIRONMENT
-    // Evaluates whether the target environment is live production
-    if (action.environment === "production") {
-      factors.push({
-        code: "PRODUCTION_ENVIRONMENT",
-        description: "Action targets the production environment",
-        points: 15,
-      });
-    }
-
-    // 6. FINANCIAL_IMPACT
-    // Evaluates estimated monetary impact in INR, selecting only the highest tier
-    const financialImpact = typeof action.financialImpact === "number" ? action.financialImpact : 0;
-    if (financialImpact >= 10000) {
-      factors.push({
-        code: "FINANCIAL_IMPACT_CRITICAL",
-        description: "Action has a financial impact of ₹10,000 or more",
-        points: 35,
-      });
-    } else if (financialImpact >= 1000) {
-      factors.push({
-        code: "FINANCIAL_IMPACT_HIGH",
-        description: "Action has a financial impact between ₹1,000 and ₹9,999",
-        points: 25,
-      });
-    } else if (financialImpact > 0) {
-      factors.push({
-        code: "FINANCIAL_IMPACT_LOW",
-        description: "Action has a financial impact below ₹1,000",
-        points: 10,
-      });
-    }
-
-    // Sum points across all applicable factors
-    const rawScore = factors.reduce((sum, factor) => sum + factor.points, 0);
-
-    // Score is clamped between 0 and 100 without modifying factor point values
-    const score = Math.min(100, Math.max(0, rawScore));
-
-    return {
-      score,
-      level: this._determineLevel(score),
-      factors,
-    };
   }
 
-  /**
-   * Deterministically maps a numeric score to a qualitative RiskLevel.
-   *
-   * @private
-   * @param {number} score - Clamped numeric score (0 - 100)
-   * @returns {"LOW" | "MEDIUM" | "HIGH" | "CRITICAL"}
-   */
-  _determineLevel(score) {
-    if (score >= 80) return "CRITICAL";
-    if (score >= 50) return "HIGH";
-    if (score >= 20) return "MEDIUM";
-    return "LOW";
+  // 2. Destructive operation: if action.operation contains 'delete' (case-insensitive)
+  if (
+    typeof action.operation === "string" &&
+    action.operation.toLowerCase().includes("delete")
+  ) {
+    factors.push({
+      name: "Destructive operation",
+      points: 80,
+    });
   }
+
+  // 3. External destination: if action.parameters.destination is 'external' (case-insensitive)
+  if (
+    typeof params.destination === "string" &&
+    params.destination.trim().toLowerCase() === "external"
+  ) {
+    factors.push({
+      name: "External destination",
+      points: 20,
+    });
+  }
+
+  // 4. Sensitive data: if action.parameters.dataClassification is 'PII' or 'FINANCIAL' (case-insensitive)
+  if (typeof params.dataClassification === "string") {
+    const classification = params.dataClassification.trim().toUpperCase();
+    if (classification === "PII" || classification === "FINANCIAL") {
+      factors.push({
+        name: "Sensitive data",
+        points: 5,
+      });
+    }
+  }
+
+  // 5. Irreversibility: if action.parameters.irreversible === true
+  if (params.irreversible === true) {
+    factors.push({
+      name: "Irreversibility",
+      points: 20,
+    });
+  }
+
+  // Cap final sum to a maximum of 100
+  const rawSum = factors.reduce((sum, factor) => sum + factor.points, 0);
+  const score = Math.min(100, rawSum);
+  const level = getRiskLevel(score);
+
+  return {
+    score,
+    level,
+    factors,
+  };
 }
